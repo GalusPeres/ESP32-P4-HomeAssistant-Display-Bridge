@@ -192,6 +192,11 @@ class Tab5Bridge:
         "scene_map": self.scene_map,
       }
     )
+    _LOGGER.warning(
+      "Tab5 LVGL DEBUG: Publishing config to topic '%s':\n%s",
+      self.config_topic,
+      payload
+    )
     await mqtt.async_publish(
       self.hass,
       self.config_topic,

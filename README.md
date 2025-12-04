@@ -52,6 +52,10 @@ Configure via the Home Assistant UI:
 
 ## Changelog
 
+### 0.2.3 (2025-12-04)
+- Added debug logging for MQTT config payload
+- Investigating scene transmission issue
+
 ### 0.2.2 (2025-12-04)
 - Second test release for HACS updates
 - Documentation improvements
