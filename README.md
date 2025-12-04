@@ -52,6 +52,10 @@ Configure via the Home Assistant UI:
 
 ## Changelog
 
+### 0.2.2 (2025-12-04)
+- Second test release for HACS updates
+- Documentation improvements
+
 ### 0.2.1 (2025-12-04)
 - Test release for HACS update mechanism
 - Minor improvements
