@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.5 (2025-12-19)
+- Publish light color in state updates for display/web UI
+
 ### 0.2.4 (2025-12-19)
 - Added light and switch control support
 - Added light/switch entity metadata in MQTT config
