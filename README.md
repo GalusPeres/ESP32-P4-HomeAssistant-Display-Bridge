@@ -8,6 +8,7 @@ Home Assistant custom integration for Tab5 LVGL displays via MQTT.
 - Automatic entity synchronization
 - Scene control
 - Sensor state publishing
+- Light and switch control
 - Auto-discovery support
 
 ## Installation
@@ -42,7 +43,21 @@ Configure via the Home Assistant UI:
 - **Base Topic**: MQTT base topic (default: `tab5`)
 - **HA Prefix**: Home Assistant state stream prefix (default: `ha/statestream`)
 - **Sensors**: Entities to sync to the display
+- **Lights**: Lights to control from the display
+- **Switches**: Switches to control from the display
 - **Scenes**: Scenes controllable from the display
+
+## Light & Switch Commands
+
+Tab5 can control entities by publishing to the command topics:
+
+- `base_topic/cmnd/light`
+- `base_topic/cmnd/switch`
+
+Payload formats:
+
+- JSON: `{"entity_id":"light.kitchen","state":"on","brightness":128}`
+- Simple: `light.kitchen on` or `on` (if only one entity is configured)
 
 ## Requirements
 

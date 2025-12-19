@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import voluptuous as vol
 
@@ -21,8 +21,10 @@ from .const import (
   CONF_BASE_TOPIC,
   CONF_DEVICE_ID,
   CONF_HA_PREFIX,
+  CONF_LIGHTS,
   CONF_SCENE_MAP,
   CONF_SENSORS,
+  CONF_SWITCHES,
   CONFIG_TOPIC_ROOT,
   CONFIG_TOPIC_SUB,
   DEFAULT_BASE,
@@ -32,6 +34,24 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+LIGHT_SERVICE_FIELDS = {
+  "transition",
+  "brightness",
+  "brightness_pct",
+  "rgb_color",
+  "rgbw_color",
+  "rgbww_color",
+  "color_temp",
+  "color_temp_kelvin",
+  "color_name",
+  "hs_color",
+  "xy_color",
+  "effect",
+  "flash",
+  "white",
+  "kelvin",
+}
 
 SERVICE_SCHEMA = vol.Schema({vol.Optional("entry_id"): cv.string})
 
@@ -117,7 +137,10 @@ class Tab5Bridge:
     self.device_id = data.get(CONF_DEVICE_ID)
     self.base_topic = _normalise_topic(data.get(CONF_BASE_TOPIC, DEFAULT_BASE), DEFAULT_BASE)
     self.ha_prefix = _normalise_topic(data.get(CONF_HA_PREFIX, DEFAULT_PREFIX), DEFAULT_PREFIX)
-    self.sensors: List[str] = list(data.get(CONF_SENSORS, []))
+    self.sensors: List[str] = _unique_entities(list(data.get(CONF_SENSORS, [])))
+    self.lights: List[str] = _unique_entities(list(data.get(CONF_LIGHTS, [])))
+    self.switches: List[str] = _unique_entities(list(data.get(CONF_SWITCHES, [])))
+    self.tracked_entities: List[str] = _unique_entities(self.sensors + self.lights + self.switches)
     self.scene_map: Dict[str, str] = {
       (alias or "").lower(): entity
       for alias, entity in (data.get(CONF_SCENE_MAP, {}) or {}).items()
@@ -126,6 +149,8 @@ class Tab5Bridge:
     self._unsub_state = None
     self._unsub_connected = None
     self._unsub_scene = None
+    self._unsub_light = None
+    self._unsub_switch = None
     self._unsub_request = None
 
   async def async_setup(self) -> None:
@@ -141,19 +166,35 @@ class Tab5Bridge:
       self._async_handle_scene_command,
     )
 
-    if self.sensors:
+    if self.lights:
+      self._unsub_light = await mqtt.async_subscribe(
+        self.hass,
+        f"{self.base_topic}/cmnd/light",
+        self._async_handle_light_command,
+      )
+
+    if self.switches:
+      self._unsub_switch = await mqtt.async_subscribe(
+        self.hass,
+        f"{self.base_topic}/cmnd/switch",
+        self._async_handle_switch_command,
+      )
+
+    if self.tracked_entities:
       self._unsub_state = async_track_state_change_event(
         self.hass,
-        self.sensors,
+        self.tracked_entities,
         self._handle_state_event,
       )
 
     _LOGGER.info(
-      "Tab5 MQTT bridge ready (device=%s, base=%s, ha_prefix=%s, sensors=%d)",
+      "Tab5 MQTT bridge ready (device=%s, base=%s, ha_prefix=%s, sensors=%d, lights=%d, switches=%d)",
       self.device_id or "n/a",
       self.base_topic,
       self.ha_prefix,
       len(self.sensors),
+      len(self.lights),
+      len(self.switches),
     )
     if self.config_topic:
       request_topic = f"{CONFIG_TOPIC_ROOT}/{self.device_id}/bridge/request"
@@ -175,6 +216,12 @@ class Tab5Bridge:
     if self._unsub_scene:
       self._unsub_scene()
       self._unsub_scene = None
+    if self._unsub_light:
+      self._unsub_light()
+      self._unsub_light = None
+    if self._unsub_switch:
+      self._unsub_switch()
+      self._unsub_switch = None
     if hasattr(self, "_unsub_request") and self._unsub_request:
       self._unsub_request()
       self._unsub_request = None
@@ -189,6 +236,10 @@ class Tab5Bridge:
         "ha_prefix": self.ha_prefix,
         "sensors": self.sensors,
         "sensor_meta": self._build_sensor_meta(),
+        "lights": self.lights,
+        "light_meta": self._build_entity_meta(self.lights),
+        "switches": self.switches,
+        "switch_meta": self._build_entity_meta(self.switches),
         "scene_map": self.scene_map,
       }
     )
@@ -206,8 +257,8 @@ class Tab5Bridge:
     )
 
   async def async_publish_snapshot(self) -> None:
-    """Push all configured sensors to MQTT."""
-    for entity_id in self.sensors:
+    """Push all configured entities to MQTT."""
+    for entity_id in self.tracked_entities:
       state = self.hass.states.get(entity_id)
       if not state:
         continue
@@ -251,6 +302,123 @@ class Tab5Bridge:
       blocking=False,
     )
 
+  async def _async_handle_light_command(self, msg: ReceiveMessage) -> None:
+    """Execute light commands originating from the Tab5."""
+    payload = msg.payload.strip()
+    if not payload:
+      return
+
+    entity_id = None
+    command = None
+    service_data: Dict[str, Any] = {}
+
+    parsed = _try_parse_json(payload)
+    if isinstance(parsed, dict):
+      entity_id = parsed.get("entity_id") or parsed.get("entity")
+      if entity_id is not None:
+        entity_id = str(entity_id).strip()
+      command = _normalise_command(parsed.get("state") or parsed.get("command"))
+      service_data = _extract_light_service_data(parsed)
+    elif isinstance(parsed, str):
+      payload = parsed.strip()
+
+    if command is None:
+      parsed_entity, parsed_command = _parse_simple_command(payload)
+      if entity_id is None:
+        entity_id = parsed_entity
+      if command is None:
+        command = parsed_command
+
+    entity_id = self._resolve_target_entity(entity_id, self.lights)
+    if not entity_id:
+      _LOGGER.warning("Unhandled light command from Tab5 (unknown entity): %s", msg.payload)
+      return
+
+    if command is None:
+      if service_data:
+        command = "on"
+      else:
+        _LOGGER.warning("Unhandled light command from Tab5 (missing state): %s", msg.payload)
+        return
+
+    command = _normalise_command(command)
+    if not command:
+      _LOGGER.warning("Unhandled light command from Tab5: %s", msg.payload)
+      return
+
+    if command == "toggle":
+      service = "toggle"
+      service_payload = {"entity_id": entity_id}
+    elif command == "off":
+      service = "turn_off"
+      service_payload = {"entity_id": entity_id}
+      if "transition" in service_data:
+        service_payload["transition"] = service_data["transition"]
+    else:
+      service = "turn_on"
+      service_payload = {"entity_id": entity_id}
+      service_payload.update(service_data)
+
+    await self.hass.services.async_call(
+      "light",
+      service,
+      service_payload,
+      blocking=False,
+    )
+
+  async def _async_handle_switch_command(self, msg: ReceiveMessage) -> None:
+    """Execute switch commands originating from the Tab5."""
+    payload = msg.payload.strip()
+    if not payload:
+      return
+
+    entity_id = None
+    command = None
+
+    parsed = _try_parse_json(payload)
+    if isinstance(parsed, dict):
+      entity_id = parsed.get("entity_id") or parsed.get("entity")
+      if entity_id is not None:
+        entity_id = str(entity_id).strip()
+      command = _normalise_command(parsed.get("state") or parsed.get("command"))
+    elif isinstance(parsed, str):
+      payload = parsed.strip()
+
+    if command is None:
+      parsed_entity, parsed_command = _parse_simple_command(payload)
+      if entity_id is None:
+        entity_id = parsed_entity
+      if command is None:
+        command = parsed_command
+
+    entity_id = self._resolve_target_entity(entity_id, self.switches)
+    if not entity_id:
+      _LOGGER.warning("Unhandled switch command from Tab5 (unknown entity): %s", msg.payload)
+      return
+
+    command = _normalise_command(command)
+    if not command:
+      _LOGGER.warning("Unhandled switch command from Tab5: %s", msg.payload)
+      return
+
+    service = "toggle" if command == "toggle" else "turn_on" if command == "on" else "turn_off"
+    await self.hass.services.async_call(
+      "switch",
+      service,
+      {"entity_id": entity_id},
+      blocking=False,
+    )
+
+  def _resolve_target_entity(self, entity_id: Optional[str], candidates: List[str]) -> Optional[str]:
+    if entity_id:
+      entity_id = entity_id.strip()
+      if entity_id in candidates:
+        return entity_id
+      return None
+    if len(candidates) == 1:
+      return candidates[0]
+    return None
+
   @callback
   def _handle_state_event(self, event) -> None:
     entity_id = event.data.get("entity_id")
@@ -285,6 +453,79 @@ class Tab5Bridge:
           entry["value"] = value.strip()
       meta.append(entry)
     return meta
+
+  def _build_entity_meta(self, entities: List[str]) -> List[Dict[str, str]]:
+    meta: List[Dict[str, str]] = []
+    for entity_id in entities:
+      entry: Dict[str, str] = {"entity_id": entity_id}
+      state: Optional[State] = self.hass.states.get(entity_id)
+      if state:
+        name = state.name
+        value = state.state
+        if isinstance(name, str) and name.strip():
+          entry["name"] = name.strip()
+        if isinstance(value, str) and value.strip():
+          entry["state"] = value.strip()
+      meta.append(entry)
+    return meta
+
+
+def _unique_entities(entities: List[str]) -> List[str]:
+  seen = set()
+  result: List[str] = []
+  for entity_id in entities:
+    cleaned = (entity_id or "").strip()
+    if not cleaned or cleaned in seen:
+      continue
+    seen.add(cleaned)
+    result.append(cleaned)
+  return result
+
+
+def _try_parse_json(payload: str) -> Any:
+  try:
+    return json.loads(payload)
+  except (ValueError, TypeError):
+    return None
+
+
+def _normalise_command(value: Any) -> Optional[str]:
+  if value is None:
+    return None
+  text = str(value).strip().lower()
+  if not text:
+    return None
+  if text in ("on", "off", "toggle"):
+    return text
+  if text in ("1", "true", "yes"):
+    return "on"
+  if text in ("0", "false", "no"):
+    return "off"
+  return None
+
+
+def _parse_simple_command(payload: str) -> Tuple[Optional[str], Optional[str]]:
+  text = (payload or "").strip()
+  if not text:
+    return None, None
+  if " " in text:
+    first, rest = text.split(None, 1)
+    if "." in first and rest.strip():
+      return first.strip(), rest.strip()
+  for separator in (":", "="):
+    if separator in text:
+      left, right = text.split(separator, 1)
+      if "." in left.strip() and right.strip():
+        return left.strip(), right.strip()
+  return None, text
+
+
+def _extract_light_service_data(payload: Dict[str, Any]) -> Dict[str, Any]:
+  data: Dict[str, Any] = {}
+  for key in LIGHT_SERVICE_FIELDS:
+    if key in payload and payload[key] is not None:
+      data[key] = payload[key]
+  return data
 
 
 def _normalise_topic(value: Optional[str], default: str) -> str:
@@ -351,6 +592,16 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     raise ValueError("invalid_sensors")
   sensors = [str(item).strip() for item in sensors_raw if str(item).strip()]
 
+  lights_raw = payload.get("lights") or []
+  if not isinstance(lights_raw, list):
+    raise ValueError("invalid_lights")
+  lights = [str(item).strip() for item in lights_raw if str(item).strip()]
+
+  switches_raw = payload.get("switches") or []
+  if not isinstance(switches_raw, list):
+    raise ValueError("invalid_switches")
+  switches = [str(item).strip() for item in switches_raw if str(item).strip()]
+
   scene_map_raw = payload.get("scene_map") or {}
   if not isinstance(scene_map_raw, dict):
     raise ValueError("invalid_scene_map")
@@ -365,6 +616,8 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     CONF_BASE_TOPIC: base,
     CONF_HA_PREFIX: prefix,
     CONF_SENSORS: sensors,
+    CONF_LIGHTS: lights,
+    CONF_SWITCHES: switches,
     CONF_SCENE_MAP: scene_map,
   }
 

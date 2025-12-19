@@ -15,10 +15,12 @@ from .const import (
   CONF_BASE_TOPIC,
   CONF_DEVICE_ID,
   CONF_HA_PREFIX,
+  CONF_LIGHTS,
   CONF_SCENE_ENTITIES,
   CONF_SCENE_MAP,
   CONF_SCENE_MAP_TEXT,
   CONF_SENSORS,
+  CONF_SWITCHES,
   DEFAULT_BASE,
   DEFAULT_PREFIX,
   DOMAIN,
@@ -87,8 +89,10 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         errors["base"] = err.args[0]
       else:
         _LOGGER.warning(
-          "Tab5 LVGL speichert: sensors=%s scene_map=%s",
+          "Tab5 LVGL speichert: sensors=%s lights=%s switches=%s scene_map=%s",
           data.get(CONF_SENSORS),
+          data.get(CONF_LIGHTS),
+          data.get(CONF_SWITCHES),
           data.get(CONF_SCENE_MAP),
         )
         self.hass.config_entries.async_update_entry(self.config_entry, data=data)
@@ -109,6 +113,12 @@ def _build_schema(defaults: Dict[str, Any]) -> vol.Schema:
       vol.Optional(CONF_SENSORS, default=defaults.get(CONF_SENSORS, [])): selector.EntitySelector(
         selector.EntitySelectorConfig(multiple=True)
       ),
+      vol.Optional(CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])): selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=["light"], multiple=True)
+      ),
+      vol.Optional(CONF_SWITCHES, default=defaults.get(CONF_SWITCHES, [])): selector.EntitySelector(
+        selector.EntitySelectorConfig(domain=["switch"], multiple=True)
+      ),
       vol.Optional(CONF_SCENE_ENTITIES, default=defaults.get(CONF_SCENE_ENTITIES, [])): selector.EntitySelector(
         selector.EntitySelectorConfig(domain=["scene"], multiple=True)
       ),
@@ -124,6 +134,8 @@ def _entry_to_form_data(source: Dict[str, Any]) -> Dict[str, Any]:
   data.setdefault(CONF_BASE_TOPIC, DEFAULT_BASE)
   data.setdefault(CONF_HA_PREFIX, DEFAULT_PREFIX)
   data.setdefault(CONF_SENSORS, [])
+  data.setdefault(CONF_LIGHTS, [])
+  data.setdefault(CONF_SWITCHES, [])
   data.setdefault(CONF_SCENE_ENTITIES, list((source.get(CONF_SCENE_MAP) or {}).values()))
   data.setdefault(CONF_SCENE_MAP_TEXT, source.get(CONF_SCENE_MAP_TEXT, ""))
   return data
@@ -146,6 +158,16 @@ def _convert_form_data(user_input: Dict[str, Any], current: Dict[str, Any] | Non
   if raw_sensors is None:
     raw_sensors = current.get(CONF_SENSORS, [])
   sensors = _normalise_entity_list(raw_sensors)
+
+  raw_lights = user_input.get(CONF_LIGHTS)
+  if raw_lights is None:
+    raw_lights = current.get(CONF_LIGHTS, [])
+  lights = _normalise_entity_list(raw_lights)
+
+  raw_switches = user_input.get(CONF_SWITCHES)
+  if raw_switches is None:
+    raw_switches = current.get(CONF_SWITCHES, [])
+  switches = _normalise_entity_list(raw_switches)
 
   scene_map = {}
 
@@ -177,6 +199,8 @@ def _convert_form_data(user_input: Dict[str, Any], current: Dict[str, Any] | Non
   updated[CONF_BASE_TOPIC] = base
   updated[CONF_HA_PREFIX] = prefix
   updated[CONF_SENSORS] = sensors
+  updated[CONF_LIGHTS] = lights
+  updated[CONF_SWITCHES] = switches
   updated[CONF_SCENE_MAP] = scene_map
   updated[CONF_SCENE_MAP_TEXT] = scene_map_text
   return updated

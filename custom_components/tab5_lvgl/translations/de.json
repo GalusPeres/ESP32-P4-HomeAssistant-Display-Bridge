@@ -3,11 +3,13 @@
     "step": {
       "user": {
         "title": "Tab5 LVGL",
-        "description": "Richte die MQTT-Bridge ein. Szenen-Alias jeweils eine Zeile: `alias=scene.entity_id`.",
+        "description": "Richte die MQTT-Bridge ein (Sensoren, Lichter, Schalter). Szenen-Alias jeweils eine Zeile: `alias=scene.entity_id`.",
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
           "sensors": "Zu spiegelnde Entitaeten",
+          "lights": "Bereitzustellende Lichter",
+          "switches": "Bereitzustellende Schalter",
           "scene_entities": "Bereitzustellende Szenen",
           "scene_map_text": "Szenen-Alias"
         }
