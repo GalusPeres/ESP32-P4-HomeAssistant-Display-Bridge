@@ -67,6 +67,10 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.4 (2025-12-19)
+- Added light and switch control support
+- Added light/switch entity metadata in MQTT config
+
 ### 0.2.3 (2025-12-04)
 - Added debug logging for MQTT config payload
 - Investigating scene transmission issue
