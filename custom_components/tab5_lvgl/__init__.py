@@ -263,7 +263,7 @@ class Tab5Bridge:
       if not state:
         continue
       topic = self._ha_topic_for_entity(entity_id, "state")
-      payload = state.state.replace(",", ".")
+      payload = self._build_state_payload(entity_id, state)
       await mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
 
 
@@ -427,10 +427,26 @@ class Tab5Bridge:
       return
 
     topic = self._ha_topic_for_entity(entity_id, "state")
-    payload = new_state.state.replace(",", ".")
+    payload = self._build_state_payload(entity_id, new_state)
     self.hass.async_create_task(
       mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
     )
+
+  def _build_state_payload(self, entity_id: str, state: State) -> str:
+    if entity_id.startswith("light."):
+      payload: Dict[str, Any] = {"state": state.state}
+      attrs = state.attributes or {}
+      rgb = attrs.get("rgb_color")
+      if isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
+        r, g, b = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        payload["rgb_color"] = [r, g, b]
+        payload["color"] = f"#{r:02X}{g:02X}{b:02X}"
+      else:
+        hs = attrs.get("hs_color")
+        if isinstance(hs, (list, tuple)) and len(hs) >= 2:
+          payload["hs_color"] = [float(hs[0]), float(hs[1])]
+      return json.dumps(payload)
+    return state.state.replace(",", ".")
 
   def _ha_topic_for_entity(self, entity_id: str, suffix: str) -> str:
     path = entity_id.replace(".", "/")
