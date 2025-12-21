@@ -1,7 +1,7 @@
 {
   "domain": "tab5_lvgl",
   "name": "Tab5 LVGL MQTT Bridge",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "documentation": "https://github.com/GalusPeres/ha-tab5-mqtt-bridge",
   "requirements": [],
   "dependencies": ["mqtt"],

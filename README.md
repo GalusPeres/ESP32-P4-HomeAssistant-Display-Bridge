@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.6 (2025-12-21)
+- Publish light brightness and supported modes in state updates
+
 ### 0.2.5 (2025-12-19)
 - Publish light color in state updates for display/web UI
 

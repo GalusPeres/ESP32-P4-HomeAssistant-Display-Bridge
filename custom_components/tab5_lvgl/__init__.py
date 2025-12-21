@@ -436,15 +436,27 @@ class Tab5Bridge:
     if entity_id.startswith("light."):
       payload: Dict[str, Any] = {"state": state.state}
       attrs = state.attributes or {}
+      supported_modes = attrs.get("supported_color_modes")
+      if supported_modes:
+        payload["supported_color_modes"] = list(supported_modes)
+      color_mode = attrs.get("color_mode")
+      if color_mode:
+        payload["color_mode"] = color_mode
+      brightness_pct = attrs.get("brightness_pct")
+      if brightness_pct is None:
+        brightness = attrs.get("brightness")
+        if isinstance(brightness, (int, float)):
+          brightness_pct = round(brightness / 255 * 100)
+      if brightness_pct is not None:
+        payload["brightness_pct"] = brightness_pct
       rgb = attrs.get("rgb_color")
       if isinstance(rgb, (list, tuple)) and len(rgb) >= 3:
         r, g, b = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
         payload["rgb_color"] = [r, g, b]
         payload["color"] = f"#{r:02X}{g:02X}{b:02X}"
-      else:
-        hs = attrs.get("hs_color")
-        if isinstance(hs, (list, tuple)) and len(hs) >= 2:
-          payload["hs_color"] = [float(hs[0]), float(hs[1])]
+      hs = attrs.get("hs_color")
+      if isinstance(hs, (list, tuple)) and len(hs) >= 2:
+        payload["hs_color"] = [float(hs[0]), float(hs[1])]
       return json.dumps(payload)
     return state.state.replace(",", ".")
 
