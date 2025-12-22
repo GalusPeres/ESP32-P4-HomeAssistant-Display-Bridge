@@ -13,7 +13,6 @@ from homeassistant import config_entries
 from homeassistant.components import mqtt
 from homeassistant.components.mqtt.models import ReceiveMessage
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.statistics import statistics_during_period
 try:
   from homeassistant.components.recorder.history import get_significant_states
 except ImportError:  # pragma: no cover - older HA fallback
@@ -324,34 +323,10 @@ class Tab5Bridge:
     hours = _coerce_int(parsed.get("hours"), 24, 1, 72)
     period_minutes = _coerce_int(parsed.get("period_minutes"), 5, 1, 60)
     points = _coerce_int(parsed.get("points"), int(hours * 60 / period_minutes), 1, 720)
-    stat = str(parsed.get("stat") or "mean").strip() or "mean"
+    stat = str(parsed.get("stat") or "mean").strip().lower() or "mean"
 
     end = dt_util.utcnow()
     start = end - timedelta(hours=hours)
-
-    def _fetch_stats() -> Dict[str, List[Dict[str, Any]]]:
-      try:
-        return statistics_during_period(
-          self.hass,
-          start,
-          end,
-          {entity_id},
-          period=timedelta(minutes=period_minutes),
-          types={stat},
-          units={},
-        )
-      except TypeError:
-        return statistics_during_period(
-          self.hass,
-          start,
-          end,
-          {entity_id},
-          period=timedelta(minutes=period_minutes),
-          types={stat},
-        )
-
-    stats = await get_instance(self.hass).async_add_executor_job(_fetch_stats)
-    series = stats.get(entity_id, []) if stats else []
 
     def _coerce_float(raw: Any) -> Optional[float]:
       if raw is None:
@@ -361,61 +336,78 @@ class Tab5Bridge:
       except (TypeError, ValueError):
         return None
 
-    values: List[Optional[float]] = []
-    for entry in series:
-      value = entry.get(stat)
-      if isinstance(value, (int, float)):
-        values.append(round(float(value), 3))
-      else:
-        values.append(None)
+    if stat not in {"mean", "min", "max", "last"}:
+      stat = "mean"
 
-    if points:
-      if len(values) > points:
-        values = values[-points:]
-      elif len(values) < points:
-        values = [None] * (points - len(values)) + values
+    def _fetch_history_values() -> List[Optional[float]]:
+      if get_significant_states is None or points <= 0:
+        return [None] * points
 
-    numeric_count = sum(1 for v in values if v is not None)
-    if period_minutes < 60 and points >= 24 and numeric_count <= hours + 1:
-      def _fetch_history_values() -> List[Optional[float]]:
-        if get_significant_states is None:
-          return []
-        try:
-          history = get_significant_states(
-            self.hass,
-            start,
-            end,
-            [entity_id],
-            include_start_time_state=True,
-            significant_changes_only=False,
-            minimal_response=True,
-            no_attributes=True,
-          )
-        except TypeError:
-          history = get_significant_states(self.hass, start, end, [entity_id])
-        states = history.get(entity_id, []) if history else []
-        if not states:
-          return []
-        bucket = timedelta(minutes=period_minutes)
-        bucket_end = start + bucket
-        idx = 0
-        last_value: Optional[float] = None
-        bucket_values: List[Optional[float]] = []
-        for _ in range(points):
-          while idx < len(states):
-            state = states[idx]
-            state_time = getattr(state, "last_changed", None) or getattr(state, "last_updated", None)
-            if state_time is None or state_time > bucket_end:
-              break
-            last_value = _coerce_float(getattr(state, "state", None))
-            idx += 1
-          bucket_values.append(last_value)
-          bucket_end += bucket
-        return bucket_values
+      try:
+        history = get_significant_states(
+          self.hass,
+          start,
+          end,
+          [entity_id],
+          include_start_time_state=True,
+          significant_changes_only=False,
+          minimal_response=True,
+          no_attributes=True,
+        )
+      except TypeError:
+        history = get_significant_states(self.hass, start, end, [entity_id])
 
-      history_values = await get_instance(self.hass).async_add_executor_job(_fetch_history_values)
-      if history_values:
-        values = history_values
+      states = history.get(entity_id, []) if history else []
+      if not states:
+        return [None] * points
+
+      bucket_seconds = max(period_minutes, 1) * 60
+      sums = [0.0] * points
+      counts = [0] * points
+      mins: List[Optional[float]] = [None] * points
+      maxs: List[Optional[float]] = [None] * points
+      lasts: List[Optional[float]] = [None] * points
+
+      for state in states:
+        state_time = getattr(state, "last_changed", None) or getattr(state, "last_updated", None)
+        if state_time is None:
+          continue
+        idx = int((state_time - start).total_seconds() / bucket_seconds)
+        if idx < 0:
+          continue
+        if idx >= points:
+          idx = points - 1
+        value = _coerce_float(getattr(state, "state", None))
+        if value is None:
+          continue
+        counts[idx] += 1
+        sums[idx] += value
+        if mins[idx] is None or value < mins[idx]:
+          mins[idx] = value
+        if maxs[idx] is None or value > maxs[idx]:
+          maxs[idx] = value
+        lasts[idx] = value
+
+      values: List[Optional[float]] = []
+      prev_value: Optional[float] = None
+      for idx in range(points):
+        if counts[idx] > 0:
+          if stat == "min":
+            value = mins[idx]
+          elif stat == "max":
+            value = maxs[idx]
+          elif stat == "last":
+            value = lasts[idx]
+          else:
+            value = sums[idx] / counts[idx]
+          prev_value = value
+        else:
+          value = prev_value
+        values.append(round(value, 3) if value is not None else None)
+
+      return values
+
+    values = await get_instance(self.hass).async_add_executor_job(_fetch_history_values)
 
     state = self.hass.states.get(entity_id)
     response: Dict[str, Any] = {

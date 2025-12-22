@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.10 (2025-12-22)
+- Use recorder state history for 24h/5min charts (288 points)
+
 ### 0.2.9 (2025-12-22)
 - Fallback to state history for finer sensor history charts
 
