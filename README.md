@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.7 (2025-12-22)
+- Added history request/response support for sensor popups (24h/5min aggregation)
+
 ### 0.2.6 (2025-12-21)
 - Publish light brightness and supported modes in state updates
 

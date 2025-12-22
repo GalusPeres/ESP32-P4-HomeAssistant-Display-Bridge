@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,11 +12,14 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import mqtt
 from homeassistant.components.mqtt.models import ReceiveMessage
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.util import dt as dt_util
 
 from .const import (
   CONF_BASE_TOPIC,
@@ -30,6 +34,8 @@ from .const import (
   DEFAULT_BASE,
   DEFAULT_PREFIX,
   DOMAIN,
+  HISTORY_REQUEST_SUFFIX,
+  HISTORY_RESPONSE_SUFFIX,
   SERVICE_PUBLISH_SNAPSHOT,
 )
 
@@ -146,12 +152,19 @@ class Tab5Bridge:
       for alias, entity in (data.get(CONF_SCENE_MAP, {}) or {}).items()
     }
     self.config_topic = f"{CONFIG_TOPIC_ROOT}/{self.device_id}/bridge/apply" if self.device_id else None
+    self.history_request_topic = (
+      f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{HISTORY_REQUEST_SUFFIX}" if self.device_id else None
+    )
+    self.history_response_topic = (
+      f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{HISTORY_RESPONSE_SUFFIX}" if self.device_id else None
+    )
     self._unsub_state = None
     self._unsub_connected = None
     self._unsub_scene = None
     self._unsub_light = None
     self._unsub_switch = None
     self._unsub_request = None
+    self._unsub_history = None
 
   async def async_setup(self) -> None:
     """Subscribe to MQTT topics and start observers."""
@@ -204,6 +217,13 @@ class Tab5Bridge:
         self._async_handle_request,
       )
       _LOGGER.debug("Tab5 subscribed to request topic %s", request_topic)
+    if self.history_request_topic:
+      self._unsub_history = await mqtt.async_subscribe(
+        self.hass,
+        self.history_request_topic,
+        self._async_handle_history_request,
+      )
+      _LOGGER.debug("Tab5 subscribed to history topic %s", self.history_request_topic)
 
   async def async_unload(self) -> None:
     """Cleanup subscriptions."""
@@ -225,6 +245,9 @@ class Tab5Bridge:
     if hasattr(self, "_unsub_request") and self._unsub_request:
       self._unsub_request()
       self._unsub_request = None
+    if self._unsub_history:
+      self._unsub_history()
+      self._unsub_history = None
 
   async def async_publish_config_to_device(self) -> None:
     if not self.config_topic or not self.device_id:
@@ -278,6 +301,82 @@ class Tab5Bridge:
     """Handle explicit bridge refresh requests."""
     _LOGGER.debug("Tab5 requested bridge refresh via %s", msg.topic)
     await self.async_publish_config_to_device()
+
+  async def _async_handle_history_request(self, msg: ReceiveMessage) -> None:
+    """Handle history requests from the Tab5 popup."""
+    if not self.history_response_topic:
+      return
+
+    parsed = _try_parse_json(msg.payload)
+    if not isinstance(parsed, dict):
+      _LOGGER.warning("Tab5 history request ignored (invalid payload): %s", msg.payload)
+      return
+
+    entity_id = str(parsed.get("entity_id") or "").strip()
+    if not entity_id:
+      _LOGGER.warning("Tab5 history request ignored (missing entity_id)")
+      return
+
+    hours = _coerce_int(parsed.get("hours"), 24, 1, 72)
+    period_minutes = _coerce_int(parsed.get("period_minutes"), 5, 1, 60)
+    points = _coerce_int(parsed.get("points"), int(hours * 60 / period_minutes), 1, 720)
+    stat = str(parsed.get("stat") or "mean").strip() or "mean"
+
+    end = dt_util.utcnow()
+    start = end - timedelta(hours=hours)
+
+    def _fetch_stats() -> Dict[str, List[Dict[str, Any]]]:
+      return statistics_during_period(
+        self.hass,
+        start,
+        end,
+        {entity_id},
+        period=timedelta(minutes=period_minutes),
+        types={stat},
+      )
+
+    stats = await get_instance(self.hass).async_add_executor_job(_fetch_stats)
+    series = stats.get(entity_id, []) if stats else []
+
+    values: List[Optional[float]] = []
+    for entry in series:
+      value = entry.get(stat)
+      if isinstance(value, (int, float)):
+        values.append(round(float(value), 3))
+      else:
+        values.append(None)
+
+    if points:
+      if len(values) > points:
+        values = values[-points:]
+      elif len(values) < points:
+        values = [None] * (points - len(values)) + values
+
+    state = self.hass.states.get(entity_id)
+    response: Dict[str, Any] = {
+      "entity_id": entity_id,
+      "hours": hours,
+      "period_minutes": period_minutes,
+      "stat": stat,
+      "values": values,
+    }
+
+    if state:
+      unit = state.attributes.get("unit_of_measurement")
+      if isinstance(unit, str) and unit.strip():
+        response["unit"] = unit.strip()
+      name = state.name
+      if isinstance(name, str) and name.strip():
+        response["name"] = name.strip()
+      response["current"] = state.state
+
+    await mqtt.async_publish(
+      self.hass,
+      self.history_response_topic,
+      json.dumps(response, separators=(",", ":")),
+      qos=0,
+      retain=False,
+    )
 
   async def _async_handle_scene_command(self, msg: ReceiveMessage) -> None:
     """Execute scene commands originating from the Tab5."""
@@ -554,6 +653,18 @@ def _extract_light_service_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     if key in payload and payload[key] is not None:
       data[key] = payload[key]
   return data
+
+
+def _coerce_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+  try:
+    result = int(value)
+  except (TypeError, ValueError):
+    result = default
+  if result < minimum:
+    return minimum
+  if result > maximum:
+    return maximum
+  return result
 
 
 def _normalise_topic(value: Optional[str], default: str) -> str:

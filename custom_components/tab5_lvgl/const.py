@@ -19,3 +19,5 @@ SERVICE_PUBLISH_SNAPSHOT = "publish_snapshot"
 
 CONFIG_TOPIC_ROOT = "tab5_lvgl/config"
 CONFIG_TOPIC_SUB = f"{CONFIG_TOPIC_ROOT}/+/bridge"
+HISTORY_REQUEST_SUFFIX = "history/request"
+HISTORY_RESPONSE_SUFFIX = "history/response"
