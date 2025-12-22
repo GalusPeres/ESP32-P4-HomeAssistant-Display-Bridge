@@ -326,14 +326,25 @@ class Tab5Bridge:
     start = end - timedelta(hours=hours)
 
     def _fetch_stats() -> Dict[str, List[Dict[str, Any]]]:
-      return statistics_during_period(
-        self.hass,
-        start,
-        end,
-        {entity_id},
-        period=timedelta(minutes=period_minutes),
-        types={stat},
-      )
+      try:
+        return statistics_during_period(
+          self.hass,
+          start,
+          end,
+          {entity_id},
+          period=timedelta(minutes=period_minutes),
+          types={stat},
+          units={},
+        )
+      except TypeError:
+        return statistics_during_period(
+          self.hass,
+          start,
+          end,
+          {entity_id},
+          period=timedelta(minutes=period_minutes),
+          types={stat},
+        )
 
     stats = await get_instance(self.hass).async_add_executor_job(_fetch_stats)
     series = stats.get(entity_id, []) if stats else []

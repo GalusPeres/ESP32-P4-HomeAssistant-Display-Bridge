@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.8 (2025-12-22)
+- Fix history stats query for newer Home Assistant recorder API
+
 ### 0.2.7 (2025-12-22)
 - Added history request/response support for sensor popups (24h/5min aggregation)
 
