@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.11 (2025-12-22)
+- Use state history API for full 5-minute buckets
+
 ### 0.2.10 (2025-12-22)
 - Use recorder state history for 24h/5min charts (288 points)
 

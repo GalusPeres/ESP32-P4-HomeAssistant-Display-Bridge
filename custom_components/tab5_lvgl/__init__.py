@@ -17,6 +17,10 @@ try:
   from homeassistant.components.recorder.history import get_significant_states
 except ImportError:  # pragma: no cover - older HA fallback
   get_significant_states = None
+try:
+  from homeassistant.components.recorder.history import state_changes_during_period
+except ImportError:  # pragma: no cover - older HA fallback
+  state_changes_during_period = None
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -340,22 +344,38 @@ class Tab5Bridge:
       stat = "mean"
 
     def _fetch_history_values() -> List[Optional[float]]:
-      if get_significant_states is None or points <= 0:
+      if points <= 0 or (state_changes_during_period is None and get_significant_states is None):
         return [None] * points
 
-      try:
-        history = get_significant_states(
-          self.hass,
-          start,
-          end,
-          [entity_id],
-          include_start_time_state=True,
-          significant_changes_only=False,
-          minimal_response=True,
-          no_attributes=True,
-        )
-      except TypeError:
-        history = get_significant_states(self.hass, start, end, [entity_id])
+      history = None
+      if state_changes_during_period is not None:
+        try:
+          history = state_changes_during_period(
+            self.hass,
+            start,
+            end,
+            [entity_id],
+            include_start_time_state=True,
+            significant_changes_only=False,
+            minimal_response=True,
+            no_attributes=True,
+          )
+        except TypeError:
+          history = state_changes_during_period(self.hass, start, end, [entity_id])
+      elif get_significant_states is not None:
+        try:
+          history = get_significant_states(
+            self.hass,
+            start,
+            end,
+            [entity_id],
+            include_start_time_state=True,
+            significant_changes_only=False,
+            minimal_response=True,
+            no_attributes=True,
+          )
+        except TypeError:
+          history = get_significant_states(self.hass, start, end, [entity_id])
 
       states = history.get(entity_id, []) if history else []
       if not states:
