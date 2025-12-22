@@ -354,14 +354,13 @@ class Tab5Bridge:
             self.hass,
             start,
             end,
-            [entity_id],
+            entity_id,
             include_start_time_state=True,
-            significant_changes_only=False,
             minimal_response=True,
             no_attributes=True,
           )
         except TypeError:
-          history = state_changes_during_period(self.hass, start, end, [entity_id])
+          history = state_changes_during_period(self.hass, start, end, entity_id)
       elif get_significant_states is not None:
         try:
           history = get_significant_states(
@@ -370,7 +369,6 @@ class Tab5Bridge:
             end,
             [entity_id],
             include_start_time_state=True,
-            significant_changes_only=False,
             minimal_response=True,
             no_attributes=True,
           )
