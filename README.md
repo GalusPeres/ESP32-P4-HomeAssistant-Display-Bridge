@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.9 (2025-12-22)
+- Fallback to state history for finer sensor history charts
+
 ### 0.2.8 (2025-12-22)
 - Fix history stats query for newer Home Assistant recorder API
 

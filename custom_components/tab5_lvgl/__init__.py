@@ -14,6 +14,10 @@ from homeassistant.components import mqtt
 from homeassistant.components.mqtt.models import ReceiveMessage
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
+try:
+  from homeassistant.components.recorder.history import get_significant_states
+except ImportError:  # pragma: no cover - older HA fallback
+  get_significant_states = None
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -349,6 +353,14 @@ class Tab5Bridge:
     stats = await get_instance(self.hass).async_add_executor_job(_fetch_stats)
     series = stats.get(entity_id, []) if stats else []
 
+    def _coerce_float(raw: Any) -> Optional[float]:
+      if raw is None:
+        return None
+      try:
+        return float(raw)
+      except (TypeError, ValueError):
+        return None
+
     values: List[Optional[float]] = []
     for entry in series:
       value = entry.get(stat)
@@ -362,6 +374,48 @@ class Tab5Bridge:
         values = values[-points:]
       elif len(values) < points:
         values = [None] * (points - len(values)) + values
+
+    numeric_count = sum(1 for v in values if v is not None)
+    if period_minutes < 60 and points >= 24 and numeric_count <= hours + 1:
+      def _fetch_history_values() -> List[Optional[float]]:
+        if get_significant_states is None:
+          return []
+        try:
+          history = get_significant_states(
+            self.hass,
+            start,
+            end,
+            [entity_id],
+            include_start_time_state=True,
+            significant_changes_only=False,
+            minimal_response=True,
+            no_attributes=True,
+          )
+        except TypeError:
+          history = get_significant_states(self.hass, start, end, [entity_id])
+        states = history.get(entity_id, []) if history else []
+        if not states:
+          return []
+        bucket = timedelta(minutes=period_minutes)
+        bucket_end = start + bucket
+        idx = 0
+        last_value: Optional[float] = None
+        bucket_values: List[Optional[float]] = []
+        for _ in range(points):
+          while idx < len(states):
+            state = states[idx]
+            state_time = getattr(state, "last_changed", None) or getattr(state, "last_updated", None)
+            if state_time is None or state_time > bucket_end:
+              break
+            last_value = _coerce_float(getattr(state, "state", None))
+            idx += 1
+          bucket_values.append(last_value)
+          bucket_end += bucket
+        return bucket_values
+
+      history_values = await get_instance(self.hass).async_add_executor_job(_fetch_history_values)
+      if history_values:
+        values = history_values
 
     state = self.hass.states.get(entity_id)
     response: Dict[str, Any] = {
