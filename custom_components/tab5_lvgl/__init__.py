@@ -767,13 +767,14 @@ def _normalise_topic(value: Optional[str], default: str) -> str:
 def _extract_mdi_icon(state: State, hass: Optional[HomeAssistant] = None) -> Optional[str]:
   if not state:
     return None
-  icon = state.attributes.get("icon")
+  raw_icon = state.attributes.get("icon")
+  icon = raw_icon.strip() if isinstance(raw_icon, str) else ""
   if not icon and hass and icon_for_entity:
     try:
-      icon = icon_for_entity(hass, state.entity_id)
+      icon = icon_for_entity(hass, state)
     except TypeError:
       try:
-        icon = icon_for_entity(hass, state)
+        icon = icon_for_entity(hass, state.entity_id)
       except Exception:
         icon = None
     except Exception:
