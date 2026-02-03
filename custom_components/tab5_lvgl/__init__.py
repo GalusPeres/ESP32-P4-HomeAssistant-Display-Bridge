@@ -25,7 +25,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 try:
   from homeassistant.helpers.icon import icon_for_entity
 except Exception:  # pragma: no cover - optional fallback
@@ -176,6 +176,8 @@ class Tab5Bridge:
     self._unsub_switch = None
     self._unsub_request = None
     self._unsub_history = None
+    self._unsub_delayed_config = None
+    self._config_refresh_scheduled = False
 
   async def async_setup(self) -> None:
     """Subscribe to MQTT topics and start observers."""
@@ -235,6 +237,7 @@ class Tab5Bridge:
         self._async_handle_history_request,
       )
       _LOGGER.debug("Tab5 subscribed to history topic %s", self.history_request_topic)
+    self._schedule_config_refresh()
 
   async def async_unload(self) -> None:
     """Cleanup subscriptions."""
@@ -259,6 +262,10 @@ class Tab5Bridge:
     if self._unsub_history:
       self._unsub_history()
       self._unsub_history = None
+    if self._unsub_delayed_config:
+      self._unsub_delayed_config()
+      self._unsub_delayed_config = None
+      self._config_refresh_scheduled = False
 
   async def async_publish_config_to_device(self) -> None:
     if not self.config_topic or not self.device_id:
@@ -308,6 +315,7 @@ class Tab5Bridge:
       _LOGGER.debug("Tab5 connected -> push config + snapshot")
       await self.async_publish_config_to_device()
       await self.async_publish_snapshot()
+      self._schedule_config_refresh()
 
   async def _async_handle_request(self, msg: ReceiveMessage) -> None:
     """Handle explicit bridge refresh requests."""
@@ -610,6 +618,23 @@ class Tab5Bridge:
     self.hass.async_create_task(
       mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
     )
+    self._schedule_config_refresh()
+
+  def _schedule_config_refresh(self, delay: float = 6.0) -> None:
+    if not self.config_topic or self._config_refresh_scheduled:
+      return
+
+    self._config_refresh_scheduled = True
+
+    def _refresh(_now) -> None:
+      self._unsub_delayed_config = None
+      self._config_refresh_scheduled = False
+      self.hass.async_create_task(self.async_publish_config_to_device())
+
+    if self._unsub_delayed_config:
+      self._unsub_delayed_config()
+      self._unsub_delayed_config = None
+    self._unsub_delayed_config = async_call_later(self.hass, delay, _refresh)
 
   def _build_state_payload(self, entity_id: str, state: State) -> str:
     if entity_id.startswith("light."):
