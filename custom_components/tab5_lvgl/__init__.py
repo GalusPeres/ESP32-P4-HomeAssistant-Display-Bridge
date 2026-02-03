@@ -151,7 +151,10 @@ class Tab5Bridge:
     self.hass = hass
     self.entry = entry
 
-    data = entry.data or {}
+    data = dict(entry.data or {})
+    if entry.options:
+      # Options override stored data (HA keeps UI edits in entry.options).
+      data.update(entry.options)
     self.device_id = data.get(CONF_DEVICE_ID)
     self.base_topic = _normalise_topic(data.get(CONF_BASE_TOPIC, DEFAULT_BASE), DEFAULT_BASE)
     self.ha_prefix = _normalise_topic(data.get(CONF_HA_PREFIX, DEFAULT_PREFIX), DEFAULT_PREFIX)
