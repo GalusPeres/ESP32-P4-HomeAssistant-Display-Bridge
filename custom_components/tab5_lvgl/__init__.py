@@ -771,10 +771,24 @@ def _extract_mdi_icon(state: State, hass: Optional[HomeAssistant] = None) -> Opt
   icon = raw_icon.strip() if isinstance(raw_icon, str) else ""
   if not icon and hass and icon_for_entity:
     try:
-      icon = icon_for_entity(hass, state)
+      # HA 2025+ typically supports state kwarg.
+      icon = icon_for_entity(hass, state.entity_id, state=state)
     except TypeError:
       try:
-        icon = icon_for_entity(hass, state.entity_id)
+        # Older signature: (hass, entity_id, state)
+        icon = icon_for_entity(hass, state.entity_id, state)
+      except TypeError:
+        try:
+          # Older signature: (hass, entity_id)
+          icon = icon_for_entity(hass, state.entity_id)
+        except TypeError:
+          try:
+            # Legacy fallback: (hass, state)
+            icon = icon_for_entity(hass, state)
+          except Exception:
+            icon = None
+        except Exception:
+          icon = None
       except Exception:
         icon = None
     except Exception:
