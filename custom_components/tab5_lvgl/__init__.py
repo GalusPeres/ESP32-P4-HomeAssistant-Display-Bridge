@@ -620,7 +620,6 @@ class Tab5Bridge:
     self.hass.async_create_task(
       mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
     )
-    self._schedule_config_refresh(delays=(5.0,))
 
   def _schedule_config_refresh(self, delays: Optional[Tuple[float, ...]] = None) -> None:
     if not self.config_topic:
