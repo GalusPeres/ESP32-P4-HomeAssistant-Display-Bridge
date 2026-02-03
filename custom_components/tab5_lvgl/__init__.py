@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import json
 import logging
@@ -634,7 +635,10 @@ class Tab5Bridge:
       return
 
     def _refresh(_now) -> None:
-      self.hass.async_create_task(self.async_publish_config_to_device())
+      asyncio.run_coroutine_threadsafe(
+        self.async_publish_config_to_device(),
+        self.hass.loop,
+      )
       self._config_refresh_pending -= 1
       if self._config_refresh_pending <= 0:
         self._config_refresh_handles = []
