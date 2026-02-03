@@ -647,12 +647,15 @@ class Tab5Bridge:
         unit = state.attributes.get("unit_of_measurement")
         name = state.name
         value = state.state
+        icon = _extract_mdi_icon(state)
         if isinstance(unit, str) and unit.strip():
           entry["unit"] = unit.strip()
         if isinstance(name, str) and name.strip():
           entry["name"] = name.strip()
         if isinstance(value, str) and value.strip():
           entry["value"] = value.strip()
+        if isinstance(icon, str) and icon.strip():
+          entry["icon"] = icon.strip()
       meta.append(entry)
     return meta
 
@@ -664,10 +667,13 @@ class Tab5Bridge:
       if state:
         name = state.name
         value = state.state
+        icon = _extract_mdi_icon(state)
         if isinstance(name, str) and name.strip():
           entry["name"] = name.strip()
         if isinstance(value, str) and value.strip():
           entry["state"] = value.strip()
+        if isinstance(icon, str) and icon.strip():
+          entry["icon"] = icon.strip()
       meta.append(entry)
     return meta
 
@@ -747,6 +753,23 @@ def _normalise_topic(value: Optional[str], default: str) -> str:
   while result.endswith("/"):
     result = result[:-1]
   return result or default
+
+
+def _extract_mdi_icon(state: State) -> Optional[str]:
+  if not state:
+    return None
+  icon = state.attributes.get("icon")
+  if not isinstance(icon, str):
+    return None
+  icon = icon.strip()
+  if not icon:
+    return None
+  # Accept standard MDI prefixes (mdi:home, mdi-home) or bare icon names.
+  if ":" in icon and not icon.startswith("mdi:"):
+    return None
+  if icon.startswith("mdi-"):
+    return "mdi:" + icon[4:]
+  return icon
 
 
 async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, Any]) -> None:
