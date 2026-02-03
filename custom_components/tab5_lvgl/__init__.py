@@ -26,6 +26,10 @@ from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_state_change_event
+try:
+  from homeassistant.helpers.icon import icon_for_entity
+except Exception:  # pragma: no cover - optional fallback
+  icon_for_entity = None
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -270,6 +274,7 @@ class Tab5Bridge:
         "light_meta": self._build_entity_meta(self.lights),
         "switches": self.switches,
         "switch_meta": self._build_entity_meta(self.switches),
+        "scene_meta": self._build_scene_meta(),
         "scene_map": self.scene_map,
       }
     )
@@ -647,7 +652,7 @@ class Tab5Bridge:
         unit = state.attributes.get("unit_of_measurement")
         name = state.name
         value = state.state
-        icon = _extract_mdi_icon(state)
+        icon = _extract_mdi_icon(state, self.hass)
         if isinstance(unit, str) and unit.strip():
           entry["unit"] = unit.strip()
         if isinstance(name, str) and name.strip():
@@ -667,7 +672,7 @@ class Tab5Bridge:
       if state:
         name = state.name
         value = state.state
-        icon = _extract_mdi_icon(state)
+        icon = _extract_mdi_icon(state, self.hass)
         if isinstance(name, str) and name.strip():
           entry["name"] = name.strip()
         if isinstance(value, str) and value.strip():
@@ -676,6 +681,10 @@ class Tab5Bridge:
           entry["icon"] = icon.strip()
       meta.append(entry)
     return meta
+
+  def _build_scene_meta(self) -> List[Dict[str, str]]:
+    entities = list({entity for entity in self.scene_map.values() if entity})
+    return self._build_entity_meta(entities)
 
 
 def _unique_entities(entities: List[str]) -> List[str]:
@@ -755,10 +764,20 @@ def _normalise_topic(value: Optional[str], default: str) -> str:
   return result or default
 
 
-def _extract_mdi_icon(state: State) -> Optional[str]:
+def _extract_mdi_icon(state: State, hass: Optional[HomeAssistant] = None) -> Optional[str]:
   if not state:
     return None
   icon = state.attributes.get("icon")
+  if not icon and hass and icon_for_entity:
+    try:
+      icon = icon_for_entity(hass, state.entity_id)
+    except TypeError:
+      try:
+        icon = icon_for_entity(hass, state)
+      except Exception:
+        icon = None
+    except Exception:
+      icon = None
   if not isinstance(icon, str):
     return None
   icon = icon.strip()
