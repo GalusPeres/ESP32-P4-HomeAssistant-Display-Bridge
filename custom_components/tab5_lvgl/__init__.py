@@ -671,7 +671,10 @@ class Tab5Bridge:
 
     def _refresh(_now) -> None:
       self._icon_refresh_handle = None
-      self.hass.async_create_task(self.async_publish_config_to_device())
+      asyncio.run_coroutine_threadsafe(
+        self.async_publish_config_to_device(),
+        self.hass.loop,
+      )
 
     self._icon_refresh_handle = async_call_later(self.hass, delay, _refresh)
 
