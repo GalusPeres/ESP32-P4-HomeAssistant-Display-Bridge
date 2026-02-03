@@ -176,8 +176,8 @@ class Tab5Bridge:
     self._unsub_switch = None
     self._unsub_request = None
     self._unsub_history = None
-    self._unsub_delayed_config = None
-    self._config_refresh_scheduled = False
+    self._config_refresh_handles: List = []
+    self._config_refresh_pending = 0
 
   async def async_setup(self) -> None:
     """Subscribe to MQTT topics and start observers."""
@@ -262,10 +262,11 @@ class Tab5Bridge:
     if self._unsub_history:
       self._unsub_history()
       self._unsub_history = None
-    if self._unsub_delayed_config:
-      self._unsub_delayed_config()
-      self._unsub_delayed_config = None
-      self._config_refresh_scheduled = False
+    if self._config_refresh_handles:
+      for unsub in self._config_refresh_handles:
+        unsub()
+      self._config_refresh_handles = []
+      self._config_refresh_pending = 0
 
   async def async_publish_config_to_device(self) -> None:
     if not self.config_topic or not self.device_id:
@@ -618,23 +619,32 @@ class Tab5Bridge:
     self.hass.async_create_task(
       mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
     )
-    self._schedule_config_refresh()
 
-  def _schedule_config_refresh(self, delay: float = 6.0) -> None:
-    if not self.config_topic or self._config_refresh_scheduled:
+  def _schedule_config_refresh(self, delays: Optional[Tuple[float, ...]] = None) -> None:
+    if not self.config_topic:
+      return
+    if delays is None:
+      delays = (6.0, 30.0, 120.0)
+
+    if self._config_refresh_handles:
+      for unsub in self._config_refresh_handles:
+        unsub()
+      self._config_refresh_handles = []
+      self._config_refresh_pending = 0
+
+    self._config_refresh_pending = len(delays)
+    if self._config_refresh_pending == 0:
       return
 
-    self._config_refresh_scheduled = True
-
     def _refresh(_now) -> None:
-      self._unsub_delayed_config = None
-      self._config_refresh_scheduled = False
       self.hass.async_create_task(self.async_publish_config_to_device())
+      self._config_refresh_pending -= 1
+      if self._config_refresh_pending <= 0:
+        self._config_refresh_handles = []
+        self._config_refresh_pending = 0
 
-    if self._unsub_delayed_config:
-      self._unsub_delayed_config()
-      self._unsub_delayed_config = None
-    self._unsub_delayed_config = async_call_later(self.hass, delay, _refresh)
+    for delay in delays:
+      self._config_refresh_handles.append(async_call_later(self.hass, delay, _refresh))
 
   def _build_state_payload(self, entity_id: str, state: State) -> str:
     if entity_id.startswith("light."):
