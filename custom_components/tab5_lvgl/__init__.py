@@ -858,6 +858,27 @@ def _fallback_icon_from_state(state: State) -> Optional[str]:
     return "mdi:toggle-switch"
   if domain == "scene":
     return "mdi:palette"
+  if domain == "weather":
+    weather_state = (state.state or "").strip().lower()
+    weather_icons = {
+      "clear-night": "mdi:weather-night",
+      "cloudy": "mdi:weather-cloudy",
+      "exceptional": "mdi:weather-cloudy-alert",
+      "fog": "mdi:weather-fog",
+      "hail": "mdi:weather-hail",
+      "lightning": "mdi:weather-lightning",
+      "lightning-rainy": "mdi:weather-lightning-rainy",
+      "partlycloudy": "mdi:weather-partly-cloudy",
+      "partly-cloudy": "mdi:weather-partly-cloudy",
+      "pouring": "mdi:weather-pouring",
+      "rainy": "mdi:weather-rainy",
+      "snowy": "mdi:weather-snowy",
+      "snowy-rainy": "mdi:weather-snowy-rainy",
+      "sunny": "mdi:weather-sunny",
+      "windy": "mdi:weather-windy",
+      "windy-variant": "mdi:weather-windy-variant",
+    }
+    return weather_icons.get(weather_state, "mdi:weather-partly-cloudy")
 
   if domain == "sensor":
     device_class_icons = {
