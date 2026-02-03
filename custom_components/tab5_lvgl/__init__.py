@@ -799,6 +799,48 @@ def _normalise_topic(value: Optional[str], default: str) -> str:
   return result or default
 
 
+def _fallback_icon_from_state(state: State) -> Optional[str]:
+  if not state:
+    return None
+  entity_id = state.entity_id or ""
+  domain = entity_id.split(".", 1)[0] if "." in entity_id else ""
+  attrs = state.attributes or {}
+  device_class = str(attrs.get("device_class") or "").strip().lower()
+  unit = str(attrs.get("unit_of_measurement") or "").strip()
+  unit_norm = unit.lower().replace(" ", "")
+
+  if domain == "light":
+    return "mdi:lightbulb"
+  if domain == "switch":
+    return "mdi:toggle-switch"
+  if domain == "scene":
+    return "mdi:palette"
+
+  if domain == "sensor":
+    device_class_icons = {
+      "temperature": "mdi:thermometer",
+      "humidity": "mdi:water-percent",
+      "power": "mdi:flash",
+      "apparent_power": "mdi:flash",
+      "voltage": "mdi:flash",
+      "current": "mdi:flash",
+      "energy": "mdi:lightning-bolt",
+      "battery": "mdi:battery",
+      "pressure": "mdi:gauge",
+    }
+    if device_class in device_class_icons:
+      return device_class_icons[device_class]
+
+    if unit_norm in {"°c", "°f", "c", "f", "degc", "degf"}:
+      return "mdi:thermometer"
+    if unit_norm in {"w", "kw", "mw", "va", "kva", "mva"}:
+      return "mdi:flash"
+    if unit_norm in {"wh", "kwh", "mwh"}:
+      return "mdi:lightning-bolt"
+
+  return None
+
+
 def _extract_mdi_icon(state: State, hass: Optional[HomeAssistant] = None) -> Optional[str]:
   if not state:
     return None
@@ -828,6 +870,8 @@ def _extract_mdi_icon(state: State, hass: Optional[HomeAssistant] = None) -> Opt
         icon = None
     except Exception:
       icon = None
+  if not icon:
+    icon = _fallback_icon_from_state(state)
   if not isinstance(icon, str):
     return None
   icon = icon.strip()
