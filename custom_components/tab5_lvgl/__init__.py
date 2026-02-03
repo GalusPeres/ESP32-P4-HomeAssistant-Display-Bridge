@@ -179,6 +179,8 @@ class Tab5Bridge:
     self._unsub_history = None
     self._config_refresh_handles: List = []
     self._config_refresh_pending = 0
+    self._icon_cache: Dict[str, str] = {}
+    self._icon_refresh_handle = None
 
   async def async_setup(self) -> None:
     """Subscribe to MQTT topics and start observers."""
@@ -213,6 +215,8 @@ class Tab5Bridge:
         self.tracked_entities,
         self._handle_state_event,
       )
+
+    self._prime_icon_cache()
 
     _LOGGER.info(
       "Tab5 MQTT bridge ready (device=%s, base=%s, ha_prefix=%s, sensors=%d, lights=%d, switches=%d)",
@@ -268,6 +272,9 @@ class Tab5Bridge:
         unsub()
       self._config_refresh_handles = []
       self._config_refresh_pending = 0
+    if self._icon_refresh_handle:
+      self._icon_refresh_handle()
+      self._icon_refresh_handle = None
 
   async def async_publish_config_to_device(self) -> None:
     if not self.config_topic or not self.device_id:
@@ -621,6 +628,13 @@ class Tab5Bridge:
       mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
     )
 
+    # Live icon updates without full grid reload.
+    if entity_id in self.tracked_entities:
+      icon = _extract_mdi_icon(new_state, self.hass) or ""
+      if self._icon_cache.get(entity_id, "") != icon:
+        self._icon_cache[entity_id] = icon
+        self._schedule_icon_refresh()
+
   def _schedule_config_refresh(self, delays: Optional[Tuple[float, ...]] = None) -> None:
     if not self.config_topic:
       return
@@ -645,6 +659,29 @@ class Tab5Bridge:
 
     for delay in delays:
       self._config_refresh_handles.append(async_call_later(self.hass, delay, _refresh))
+
+  def _schedule_icon_refresh(self, delay: float = 2.0) -> None:
+    if not self.config_topic:
+      return
+    if self._icon_refresh_handle:
+      return
+
+    def _refresh(_now) -> None:
+      self._icon_refresh_handle = None
+      self.hass.async_create_task(self.async_publish_config_to_device())
+
+    self._icon_refresh_handle = async_call_later(self.hass, delay, _refresh)
+
+  def _prime_icon_cache(self) -> None:
+    if not self.tracked_entities:
+      return
+    for entity_id in self.tracked_entities:
+      state = self.hass.states.get(entity_id)
+      if not state:
+        self._icon_cache[entity_id] = ""
+        continue
+      icon = _extract_mdi_icon(state, self.hass) or ""
+      self._icon_cache[entity_id] = icon
 
   def _build_state_payload(self, entity_id: str, state: State) -> str:
     if entity_id.startswith("light."):
