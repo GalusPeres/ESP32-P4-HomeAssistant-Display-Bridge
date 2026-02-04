@@ -776,7 +776,12 @@ class Tab5Bridge:
       entry: Dict[str, Any] = {"entity_id": entity_id}
       state: Optional[State] = self.hass.states.get(entity_id)
       if state:
-        entry.update(_extract_weather_payload(state, self.hass))
+        name = state.name
+        if isinstance(name, str) and name.strip():
+          entry["name"] = name.strip()
+        icon = _weather_icon_from_state(state, self.hass)
+        if isinstance(icon, str) and icon.strip():
+          entry["icon"] = icon.strip()
       meta.append(entry)
     return meta
 
