@@ -22,6 +22,10 @@ try:
   from homeassistant.components.recorder.history import state_changes_during_period
 except ImportError:  # pragma: no cover - older HA fallback
   state_changes_during_period = None
+try:
+  from homeassistant.components.weather import async_get_forecasts
+except Exception:  # pragma: no cover - optional weather helper
+  async_get_forecasts = None
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -73,6 +77,10 @@ LIGHT_SERVICE_FIELDS = {
 }
 
 SERVICE_SCHEMA = vol.Schema({vol.Optional("entry_id"): cv.string})
+
+FORECAST_TYPE = "daily"
+FORECAST_LIMIT = 5
+FORECAST_CACHE_TTL = timedelta(minutes=10)
 
 
 async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
@@ -186,6 +194,7 @@ class Tab5Bridge:
     self._config_refresh_pending = 0
     self._icon_cache: Dict[str, str] = {}
     self._icon_refresh_handle = None
+    self._forecast_cache: Dict[str, Tuple[datetime, List[Dict[str, Any]]]] = {}
 
   async def async_setup(self) -> None:
     """Subscribe to MQTT topics and start observers."""
@@ -324,13 +333,7 @@ class Tab5Bridge:
       payload = self._build_state_payload(entity_id, state)
       await mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
       if _is_weather_entity(entity_id):
-        await mqtt.async_publish(
-          self.hass,
-          self._ha_topic_for_entity(entity_id, "weather"),
-          self._build_weather_payload(entity_id, state),
-          qos=0,
-          retain=True,
-        )
+        await self._async_publish_weather_state(entity_id, state, retain=True)
 
 
   async def _async_handle_connected(self, msg: ReceiveMessage) -> None:
@@ -644,9 +647,8 @@ class Tab5Bridge:
     )
     if _is_weather_entity(entity_id):
       weather_topic = self._ha_topic_for_entity(entity_id, "weather")
-      weather_payload = self._build_weather_payload(entity_id, new_state)
       self.hass.async_create_task(
-        mqtt.async_publish(self.hass, weather_topic, weather_payload, qos=0, retain=True)
+        self._async_publish_weather_state(entity_id, new_state, retain=True)
       )
 
     # Live icon updates without full grid reload.
@@ -699,6 +701,71 @@ class Tab5Bridge:
 
     self._icon_refresh_handle = async_call_later(self.hass, delay, _refresh)
 
+  async def _get_weather_forecast(self, entity_id: str) -> Optional[List[Dict[str, Any]]]:
+    now = dt_util.utcnow()
+    cached = self._forecast_cache.get(entity_id)
+    if cached and (now - cached[0]) < FORECAST_CACHE_TTL:
+      return cached[1]
+
+    forecast = await self._fetch_weather_forecast(entity_id)
+    if forecast:
+      self._forecast_cache[entity_id] = (now, forecast)
+    return forecast
+
+  async def _fetch_weather_forecast(self, entity_id: str) -> Optional[List[Dict[str, Any]]]:
+    forecast: Optional[List[Dict[str, Any]]] = None
+
+    if async_get_forecasts:
+      try:
+        result = await async_get_forecasts(self.hass, entity_id, FORECAST_TYPE)
+      except TypeError:
+        try:
+          result = await async_get_forecasts(self.hass, entity_id)
+        except Exception as err:  # pragma: no cover - optional helper
+          _LOGGER.debug("Tab5 LVGL: async_get_forecasts failed for %s (%s)", entity_id, err)
+          result = None
+      except Exception as err:  # pragma: no cover - optional helper
+        _LOGGER.debug("Tab5 LVGL: async_get_forecasts failed for %s (%s)", entity_id, err)
+        result = None
+
+      if result is not None:
+        forecast = _extract_forecast_from_result(result, entity_id)
+
+    if forecast is None:
+      try:
+        response = await self.hass.services.async_call(
+          "weather",
+          "get_forecasts",
+          {"entity_id": entity_id, "type": FORECAST_TYPE},
+          blocking=True,
+          return_response=True,
+        )
+      except TypeError:
+        try:
+          await self.hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": entity_id, "type": FORECAST_TYPE},
+            blocking=True,
+          )
+        except Exception as err:
+          _LOGGER.debug("Tab5 LVGL: weather.get_forecasts failed for %s (%s)", entity_id, err)
+        response = None
+      except Exception as err:
+        _LOGGER.debug("Tab5 LVGL: weather.get_forecasts failed for %s (%s)", entity_id, err)
+        response = None
+
+      if response is not None:
+        forecast = _extract_forecast_from_result(response, entity_id)
+
+    forecast = _sanitize_forecast_list(forecast)
+    if not forecast:
+      return None
+    _apply_forecast_icons(forecast)
+    if len(forecast) > FORECAST_LIMIT:
+      forecast = forecast[:FORECAST_LIMIT]
+    return forecast
+
   def _prime_icon_cache(self) -> None:
     if not self.tracked_entities:
       return
@@ -741,8 +808,18 @@ class Tab5Bridge:
       return json.dumps(payload)
     return state.state.replace(",", ".")
 
-  def _build_weather_payload(self, entity_id: str, state: State) -> str:
+  async def _async_publish_weather_state(self, entity_id: str, state: State, retain: bool = True) -> None:
+    payload = await self._build_weather_payload(entity_id, state)
+    topic = self._ha_topic_for_entity(entity_id, "weather")
+    await mqtt.async_publish(self.hass, topic, payload, qos=0, retain=retain)
+
+  async def _build_weather_payload(self, entity_id: str, state: State) -> str:
     payload = _extract_weather_payload(state, self.hass)
+    forecast = payload.get("forecast")
+    if not forecast:
+      cached = await self._get_weather_forecast(entity_id)
+      if cached:
+        payload["forecast"] = cached
     return json.dumps(payload)
 
   def _ha_topic_for_entity(self, entity_id: str, suffix: str) -> str:
@@ -1033,6 +1110,39 @@ _WEATHER_ICON_MAP = {
 }
 
 
+def _apply_forecast_icons(forecast: List[Dict[str, Any]]) -> None:
+  for entry in forecast:
+    if not isinstance(entry, dict):
+      continue
+    icon = entry.get("icon")
+    if isinstance(icon, str) and icon.strip():
+      continue
+    condition = entry.get("condition") or entry.get("state")
+    if not isinstance(condition, str):
+      continue
+    key = condition.strip().lower()
+    if key in _WEATHER_ICON_MAP:
+      entry["icon"] = _WEATHER_ICON_MAP[key]
+
+
+def _extract_forecast_from_result(result: Any, entity_id: str) -> Optional[List[Dict[str, Any]]]:
+  if isinstance(result, list):
+    return result
+  if not isinstance(result, dict):
+    return None
+  if isinstance(result.get("forecast"), list):
+    return result.get("forecast")
+  entry = result.get(entity_id) or result.get(entity_id.lower()) or result.get(entity_id.upper())
+  if isinstance(entry, list):
+    return entry
+  if isinstance(entry, dict):
+    if isinstance(entry.get("forecast"), list):
+      return entry.get("forecast")
+    if isinstance(entry.get("forecasts"), list):
+      return entry.get("forecasts")
+  return None
+
+
 def _weather_icon_from_state(state: State, hass: Optional[HomeAssistant] = None) -> Optional[str]:
   if not state:
     return None
@@ -1099,6 +1209,9 @@ def _extract_weather_payload(state: State, hass: Optional[HomeAssistant] = None)
 
   forecast = _sanitize_forecast_list(attrs.get("forecast"))
   if forecast:
+    _apply_forecast_icons(forecast)
+    if len(forecast) > FORECAST_LIMIT:
+      forecast = forecast[:FORECAST_LIMIT]
     payload["forecast"] = forecast
 
   return payload
