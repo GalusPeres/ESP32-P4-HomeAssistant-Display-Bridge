@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -742,61 +742,7 @@ class Tab5Bridge:
     return state.state.replace(",", ".")
 
   def _build_weather_payload(self, entity_id: str, state: State) -> str:
-    attrs = state.attributes or {}
-    payload: Dict[str, Any] = {"state": state.state}
-
-    def _add(key: str, attr: str) -> None:
-      value = attrs.get(attr)
-      if value is None or value == "":
-        return
-      payload[key] = value
-
-    _add("temperature", "temperature")
-    _add("humidity", "humidity")
-    _add("pressure", "pressure")
-    _add("wind_speed", "wind_speed")
-    _add("wind_bearing", "wind_bearing")
-    _add("visibility", "visibility")
-
-    units: Dict[str, Any] = {}
-    if "temperature_unit" in attrs:
-      units["temperature"] = attrs.get("temperature_unit")
-    if "pressure_unit" in attrs:
-      units["pressure"] = attrs.get("pressure_unit")
-    if "wind_speed_unit" in attrs:
-      units["wind_speed"] = attrs.get("wind_speed_unit")
-    if units:
-      payload["units"] = units
-
-    icon = _weather_icon_from_state(state, self.hass)
-    if isinstance(icon, str) and icon.strip():
-      payload["icon"] = icon.strip()
-
-    forecast = attrs.get("forecast")
-    if isinstance(forecast, list):
-      trimmed: List[Dict[str, Any]] = []
-      for item in forecast[:3]:
-        if not isinstance(item, dict):
-          continue
-        out: Dict[str, Any] = {}
-        for key in (
-          "datetime",
-          "condition",
-          "temperature",
-          "templow",
-          "humidity",
-          "precipitation",
-          "precipitation_probability",
-          "wind_speed",
-          "wind_bearing",
-        ):
-          if key in item and item[key] is not None:
-            out[key] = item[key]
-        if out:
-          trimmed.append(out)
-      if trimmed:
-        payload["forecast"] = trimmed
-
+    payload = _extract_weather_payload(state, self.hass)
     return json.dumps(payload)
 
   def _ha_topic_for_entity(self, entity_id: str, suffix: str) -> str:
@@ -830,21 +776,7 @@ class Tab5Bridge:
       entry: Dict[str, Any] = {"entity_id": entity_id}
       state: Optional[State] = self.hass.states.get(entity_id)
       if state:
-        attrs = state.attributes or {}
-        name = state.name
-        if isinstance(name, str) and name.strip():
-          entry["name"] = name.strip()
-        if isinstance(state.state, str) and state.state.strip():
-          entry["state"] = state.state.strip()
-        icon = _weather_icon_from_state(state, self.hass)
-        if isinstance(icon, str) and icon.strip():
-          entry["icon"] = icon.strip()
-        temp = attrs.get("temperature")
-        if temp is not None:
-          entry["temperature"] = temp
-        humidity = attrs.get("humidity")
-        if humidity is not None:
-          entry["humidity"] = humidity
+        entry.update(_extract_weather_payload(state, self.hass))
       meta.append(entry)
     return meta
 
@@ -1049,6 +981,34 @@ def _extract_mdi_icon(state: State, hass: Optional[HomeAssistant] = None) -> Opt
   return icon
 
 
+def _normalize_weather_value(value: Any) -> Any:
+  if isinstance(value, datetime):
+    try:
+      return dt_util.as_utc(value).isoformat()
+    except Exception:
+      return value.isoformat()
+  if isinstance(value, date):
+    return value.isoformat()
+  return value
+
+
+def _sanitize_forecast_list(value: Any) -> Optional[List[Dict[str, Any]]]:
+  if not isinstance(value, list):
+    return None
+  cleaned: List[Dict[str, Any]] = []
+  for item in value:
+    if not isinstance(item, dict):
+      continue
+    out: Dict[str, Any] = {}
+    for key, val in item.items():
+      if val is None:
+        continue
+      out[key] = _normalize_weather_value(val)
+    if out:
+      cleaned.append(out)
+  return cleaned if cleaned else None
+
+
 _WEATHER_ICON_MAP = {
   "clear-night": "mdi:weather-night",
   "cloudy": "mdi:weather-cloudy",
@@ -1081,6 +1041,62 @@ def _weather_icon_from_state(state: State, hass: Optional[HomeAssistant] = None)
     if key in _WEATHER_ICON_MAP:
       return _WEATHER_ICON_MAP[key]
   return None
+
+
+def _extract_weather_payload(state: State, hass: Optional[HomeAssistant] = None) -> Dict[str, Any]:
+  attrs = state.attributes or {}
+  payload: Dict[str, Any] = {"state": state.state}
+
+  name = state.name
+  if isinstance(name, str) and name.strip():
+    payload["name"] = name.strip()
+
+  icon = _weather_icon_from_state(state, hass)
+  if isinstance(icon, str) and icon.strip():
+    payload["icon"] = icon.strip()
+
+  for key in (
+    "temperature",
+    "apparent_temperature",
+    "dew_point",
+    "humidity",
+    "pressure",
+    "wind_speed",
+    "wind_bearing",
+    "wind_gust_speed",
+    "visibility",
+    "ozone",
+    "uv_index",
+    "cloud_coverage",
+    "precipitation",
+    "precipitation_probability",
+  ):
+    if key in attrs and attrs[key] is not None:
+      payload[key] = _normalize_weather_value(attrs[key])
+
+  units: Dict[str, Any] = {}
+  for unit_key, unit_name in (
+    ("temperature_unit", "temperature"),
+    ("pressure_unit", "pressure"),
+    ("wind_speed_unit", "wind_speed"),
+    ("visibility_unit", "visibility"),
+    ("precipitation_unit", "precipitation"),
+  ):
+    unit_val = attrs.get(unit_key)
+    if unit_val:
+      units[unit_name] = unit_val
+  if units:
+    payload["units"] = units
+
+  attribution = attrs.get("attribution")
+  if isinstance(attribution, str) and attribution.strip():
+    payload["attribution"] = attribution.strip()
+
+  forecast = _sanitize_forecast_list(attrs.get("forecast"))
+  if forecast:
+    payload["forecast"] = forecast
+
+  return payload
 
 
 async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, Any]) -> None:
