@@ -651,7 +651,10 @@ class Tab5Bridge:
 
     # Live icon updates without full grid reload.
     if entity_id in self.tracked_entities:
-      icon = _extract_mdi_icon(new_state, self.hass) or ""
+      if _is_weather_entity(entity_id):
+        icon = _weather_icon_from_state(new_state, self.hass) or ""
+      else:
+        icon = _extract_mdi_icon(new_state, self.hass) or ""
       if self._icon_cache.get(entity_id, "") != icon:
         self._icon_cache[entity_id] = icon
         self._schedule_icon_refresh()
@@ -704,7 +707,10 @@ class Tab5Bridge:
       if not state:
         self._icon_cache[entity_id] = ""
         continue
-      icon = _extract_mdi_icon(state, self.hass) or ""
+      if _is_weather_entity(entity_id):
+        icon = _weather_icon_from_state(state, self.hass) or ""
+      else:
+        icon = _extract_mdi_icon(state, self.hass) or ""
       self._icon_cache[entity_id] = icon
 
   def _build_state_payload(self, entity_id: str, state: State) -> str:
@@ -762,7 +768,7 @@ class Tab5Bridge:
     if units:
       payload["units"] = units
 
-    icon = _extract_mdi_icon(state, self.hass)
+    icon = _weather_icon_from_state(state, self.hass)
     if isinstance(icon, str) and icon.strip():
       payload["icon"] = icon.strip()
 
@@ -830,7 +836,7 @@ class Tab5Bridge:
           entry["name"] = name.strip()
         if isinstance(state.state, str) and state.state.strip():
           entry["state"] = state.state.strip()
-        icon = _extract_mdi_icon(state, self.hass)
+        icon = _weather_icon_from_state(state, self.hass)
         if isinstance(icon, str) and icon.strip():
           entry["icon"] = icon.strip()
         temp = attrs.get("temperature")
@@ -1041,6 +1047,40 @@ def _extract_mdi_icon(state: State, hass: Optional[HomeAssistant] = None) -> Opt
   if icon.startswith("mdi-"):
     return "mdi:" + icon[4:]
   return icon
+
+
+_WEATHER_ICON_MAP = {
+  "clear-night": "mdi:weather-night",
+  "cloudy": "mdi:weather-cloudy",
+  "exceptional": "mdi:alert-circle-outline",
+  "fog": "mdi:weather-fog",
+  "hail": "mdi:weather-hail",
+  "lightning": "mdi:weather-lightning",
+  "lightning-rainy": "mdi:weather-lightning-rainy",
+  "partlycloudy": "mdi:weather-partly-cloudy",
+  "pouring": "mdi:weather-pouring",
+  "rainy": "mdi:weather-rainy",
+  "snowy": "mdi:weather-snowy",
+  "snowy-rainy": "mdi:weather-snowy-rainy",
+  "sunny": "mdi:weather-sunny",
+  "windy": "mdi:weather-windy",
+  "windy-variant": "mdi:weather-windy-variant",
+}
+
+
+def _weather_icon_from_state(state: State, hass: Optional[HomeAssistant] = None) -> Optional[str]:
+  if not state:
+    return None
+  icon = _extract_mdi_icon(state, hass)
+  if icon:
+    return icon
+  attrs = state.attributes or {}
+  condition = attrs.get("condition") or state.state
+  if isinstance(condition, str):
+    key = condition.strip().lower()
+    if key in _WEATHER_ICON_MAP:
+      return _WEATHER_ICON_MAP[key]
+  return None
 
 
 async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, Any]) -> None:
