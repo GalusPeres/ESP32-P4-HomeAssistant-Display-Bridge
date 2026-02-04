@@ -10,6 +10,7 @@ CONF_SCENE_ENTITIES = "scene_entities"
 CONF_DEVICE_ID = "device_id"
 
 CONF_SENSORS = "sensors"
+CONF_WEATHERS = "weathers"
 CONF_LIGHTS = "lights"
 CONF_SWITCHES = "switches"
 

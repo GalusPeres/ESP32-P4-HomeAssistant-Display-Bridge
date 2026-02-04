@@ -41,6 +41,7 @@ from .const import (
   CONF_SCENE_MAP,
   CONF_SENSORS,
   CONF_SWITCHES,
+  CONF_WEATHERS,
   CONFIG_TOPIC_ROOT,
   CONFIG_TOPIC_SUB,
   DEFAULT_BASE,
@@ -158,10 +159,11 @@ class Tab5Bridge:
     self.device_id = data.get(CONF_DEVICE_ID)
     self.base_topic = _normalise_topic(data.get(CONF_BASE_TOPIC, DEFAULT_BASE), DEFAULT_BASE)
     self.ha_prefix = _normalise_topic(data.get(CONF_HA_PREFIX, DEFAULT_PREFIX), DEFAULT_PREFIX)
-    self.sensors: List[str] = _unique_entities(list(data.get(CONF_SENSORS, [])))
+    raw_sensors = _unique_entities(list(data.get(CONF_SENSORS, [])))
+    self.weathers, self.sensors = _split_weather_entities(raw_sensors)
     self.lights: List[str] = _unique_entities(list(data.get(CONF_LIGHTS, [])))
     self.switches: List[str] = _unique_entities(list(data.get(CONF_SWITCHES, [])))
-    self.tracked_entities: List[str] = _unique_entities(self.sensors + self.lights + self.switches)
+    self.tracked_entities: List[str] = _unique_entities(self.sensors + self.lights + self.switches + self.weathers)
     self.scene_map: Dict[str, str] = {
       (alias or "").lower(): entity
       for alias, entity in (data.get(CONF_SCENE_MAP, {}) or {}).items()
@@ -289,6 +291,8 @@ class Tab5Bridge:
         "ha_prefix": self.ha_prefix,
         "sensors": self.sensors,
         "sensor_meta": self._build_sensor_meta(),
+        CONF_WEATHERS: self.weathers,
+        "weather_meta": self._build_weather_meta(),
         "lights": self.lights,
         "light_meta": self._build_entity_meta(self.lights),
         "switches": self.switches,
@@ -319,6 +323,14 @@ class Tab5Bridge:
       topic = self._ha_topic_for_entity(entity_id, "state")
       payload = self._build_state_payload(entity_id, state)
       await mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
+      if _is_weather_entity(entity_id):
+        await mqtt.async_publish(
+          self.hass,
+          self._ha_topic_for_entity(entity_id, "weather"),
+          self._build_weather_payload(entity_id, state),
+          qos=0,
+          retain=True,
+        )
 
 
   async def _async_handle_connected(self, msg: ReceiveMessage) -> None:
@@ -630,6 +642,12 @@ class Tab5Bridge:
     self.hass.async_create_task(
       mqtt.async_publish(self.hass, topic, payload, qos=0, retain=True)
     )
+    if _is_weather_entity(entity_id):
+      weather_topic = self._ha_topic_for_entity(entity_id, "weather")
+      weather_payload = self._build_weather_payload(entity_id, new_state)
+      self.hass.async_create_task(
+        mqtt.async_publish(self.hass, weather_topic, weather_payload, qos=0, retain=True)
+      )
 
     # Live icon updates without full grid reload.
     if entity_id in self.tracked_entities:
@@ -717,6 +735,64 @@ class Tab5Bridge:
       return json.dumps(payload)
     return state.state.replace(",", ".")
 
+  def _build_weather_payload(self, entity_id: str, state: State) -> str:
+    attrs = state.attributes or {}
+    payload: Dict[str, Any] = {"state": state.state}
+
+    def _add(key: str, attr: str) -> None:
+      value = attrs.get(attr)
+      if value is None or value == "":
+        return
+      payload[key] = value
+
+    _add("temperature", "temperature")
+    _add("humidity", "humidity")
+    _add("pressure", "pressure")
+    _add("wind_speed", "wind_speed")
+    _add("wind_bearing", "wind_bearing")
+    _add("visibility", "visibility")
+
+    units: Dict[str, Any] = {}
+    if "temperature_unit" in attrs:
+      units["temperature"] = attrs.get("temperature_unit")
+    if "pressure_unit" in attrs:
+      units["pressure"] = attrs.get("pressure_unit")
+    if "wind_speed_unit" in attrs:
+      units["wind_speed"] = attrs.get("wind_speed_unit")
+    if units:
+      payload["units"] = units
+
+    icon = _extract_mdi_icon(state, self.hass)
+    if isinstance(icon, str) and icon.strip():
+      payload["icon"] = icon.strip()
+
+    forecast = attrs.get("forecast")
+    if isinstance(forecast, list):
+      trimmed: List[Dict[str, Any]] = []
+      for item in forecast[:3]:
+        if not isinstance(item, dict):
+          continue
+        out: Dict[str, Any] = {}
+        for key in (
+          "datetime",
+          "condition",
+          "temperature",
+          "templow",
+          "humidity",
+          "precipitation",
+          "precipitation_probability",
+          "wind_speed",
+          "wind_bearing",
+        ):
+          if key in item and item[key] is not None:
+            out[key] = item[key]
+        if out:
+          trimmed.append(out)
+      if trimmed:
+        payload["forecast"] = trimmed
+
+    return json.dumps(payload)
+
   def _ha_topic_for_entity(self, entity_id: str, suffix: str) -> str:
     path = entity_id.replace(".", "/")
     return f"{self.ha_prefix}/{path}/{suffix}"
@@ -739,6 +815,30 @@ class Tab5Bridge:
           entry["value"] = value.strip()
         if isinstance(icon, str) and icon.strip():
           entry["icon"] = icon.strip()
+      meta.append(entry)
+    return meta
+
+  def _build_weather_meta(self) -> List[Dict[str, Any]]:
+    meta: List[Dict[str, Any]] = []
+    for entity_id in self.weathers:
+      entry: Dict[str, Any] = {"entity_id": entity_id}
+      state: Optional[State] = self.hass.states.get(entity_id)
+      if state:
+        attrs = state.attributes or {}
+        name = state.name
+        if isinstance(name, str) and name.strip():
+          entry["name"] = name.strip()
+        if isinstance(state.state, str) and state.state.strip():
+          entry["state"] = state.state.strip()
+        icon = _extract_mdi_icon(state, self.hass)
+        if isinstance(icon, str) and icon.strip():
+          entry["icon"] = icon.strip()
+        temp = attrs.get("temperature")
+        if temp is not None:
+          entry["temperature"] = temp
+        humidity = attrs.get("humidity")
+        if humidity is not None:
+          entry["humidity"] = humidity
       meta.append(entry)
     return meta
 
@@ -775,6 +875,21 @@ def _unique_entities(entities: List[str]) -> List[str]:
     seen.add(cleaned)
     result.append(cleaned)
   return result
+
+
+def _is_weather_entity(entity_id: str) -> bool:
+  return isinstance(entity_id, str) and entity_id.startswith("weather.")
+
+
+def _split_weather_entities(entities: List[str]) -> Tuple[List[str], List[str]]:
+  weathers: List[str] = []
+  sensors: List[str] = []
+  for entity_id in entities:
+    if _is_weather_entity(entity_id):
+      weathers.append(entity_id)
+    else:
+      sensors.append(entity_id)
+  return _unique_entities(weathers), _unique_entities(sensors)
 
 
 def _try_parse_json(payload: str) -> Any:
