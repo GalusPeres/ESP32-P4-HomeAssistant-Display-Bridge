@@ -7,10 +7,10 @@
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
-          "sensors": "Zu spiegelnde Entitaeten",
-          "lights": "Bereitzustellende Lichter",
-          "switches": "Bereitzustellende Schalter",
-          "scene_entities": "Bereitzustellende Szenen",
+          "sensors": "Sensoren",
+          "lights": "Lichter",
+          "switches": "Schalter",
+          "scene_entities": "Szenen",
           "scene_map_text": "Szenen-Alias"
         }
       }
@@ -23,7 +23,16 @@
     "step": {
       "user": {
         "title": "Tab5 LVGL",
-        "description": "Passe die Bridge-Einstellungen an. Alias-Format: `alias=scene.entity_id` pro Zeile."
+        "description": "Passe die Bridge-Einstellungen an. Alias-Format: `alias=scene.entity_id` pro Zeile.",
+        "data": {
+          "base_topic": "MQTT-Basis",
+          "ha_prefix": "HA-Praefix",
+          "sensors": "Sensoren",
+          "lights": "Lichter",
+          "switches": "Schalter",
+          "scene_entities": "Szenen",
+          "scene_map_text": "Szenen-Alias"
+        }
       }
     },
     "error": {

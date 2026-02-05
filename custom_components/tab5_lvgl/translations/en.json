@@ -7,10 +7,10 @@
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
-          "sensors": "Entities to mirror",
-          "lights": "Lights to expose",
-          "switches": "Switches to expose",
-          "scene_entities": "Scenes to expose",
+          "sensors": "Sensors",
+          "lights": "Lights",
+          "switches": "Switches",
+          "scene_entities": "Scenes",
           "scene_map_text": "Scene aliases"
         }
       }
@@ -23,7 +23,16 @@
     "step": {
       "user": {
         "title": "Tab5 LVGL",
-        "description": "Update the MQTT bridge settings. Scene aliases use one entry per line: `alias=scene.entity_id`."
+        "description": "Update the MQTT bridge settings. Scene aliases use one entry per line: `alias=scene.entity_id`.",
+        "data": {
+          "base_topic": "MQTT base topic",
+          "ha_prefix": "HA entity prefix",
+          "sensors": "Sensors",
+          "lights": "Lights",
+          "switches": "Switches",
+          "scene_entities": "Scenes",
+          "scene_map_text": "Scene aliases"
+        }
       }
     },
     "error": {
