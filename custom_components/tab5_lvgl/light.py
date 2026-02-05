@@ -52,7 +52,7 @@ class Tab5DisplayLight(LightEntity):
     def __init__(self, entry: ConfigEntry, base_topic: str) -> None:
         self._entry = entry
         self._device_info = entry_device_info(entry)
-        self._attr_unique_id = f"{entry_device_id(entry)}_display_brightness_light"
+        self._attr_unique_id = f"{entry_device_id(entry)}_display_brightness"
         self._topic_cmd = command_topic(base_topic, TOPIC_DISPLAY_BRIGHTNESS)
         self._topic_state = state_topic(base_topic, TOPIC_DISPLAY_BRIGHTNESS)
         self._unsub_state = None
