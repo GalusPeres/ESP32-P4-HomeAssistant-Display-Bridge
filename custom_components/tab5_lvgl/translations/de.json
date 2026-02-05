@@ -17,9 +17,6 @@
     },
     "error": {
       "invalid_scene_map": "Szenen-Alias muessen dem Muster alias=scene.entity_id folgen (eine Zeile pro Alias)."
-    },
-    "abort": {
-      "single_instance_allowed": "Es kann nur eine Tab5 LVGL Bridge geben."
     }
   },
   "options": {

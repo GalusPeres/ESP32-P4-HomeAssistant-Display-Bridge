@@ -18,6 +18,13 @@ DEFAULT_BASE = "tab5"
 DEFAULT_PREFIX = "ha/statestream"
 SERVICE_PUBLISH_SNAPSHOT = "publish_snapshot"
 
+TOPIC_DISPLAY_BRIGHTNESS = "display_brightness"
+TOPIC_DISPLAY_ROTATE = "display_rotate"
+TOPIC_SLEEP_MAINS = "sleep_mains"
+TOPIC_SLEEP_BATTERY = "sleep_battery"
+
+SLEEP_OPTIONS = ["5 s", "15 s", "30 s", "60 s", "5 min", "15 min", "30 min", "60 min", "Nie"]
+
 CONFIG_TOPIC_ROOT = "tab5_lvgl/config"
 CONFIG_TOPIC_SUB = f"{CONFIG_TOPIC_ROOT}/+/bridge"
 HISTORY_REQUEST_SUFFIX = "history/request"

@@ -30,6 +30,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 try:
   from homeassistant.helpers.icon import icon_for_entity
@@ -55,8 +56,11 @@ from .const import (
   HISTORY_RESPONSE_SUFFIX,
   SERVICE_PUBLISH_SNAPSHOT,
 )
+from .device_helpers import entry_device_id, entry_device_name
 
 _LOGGER = logging.getLogger(__name__)
+
+PLATFORMS = ["number", "select", "switch"]
 
 LIGHT_SERVICE_FIELDS = {
   "transition",
@@ -121,19 +125,31 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   """Create the bridge instance for a config entry."""
+  device_reg = dr.async_get(hass)
+  device_reg.async_get_or_create(
+    config_entry_id=entry.entry_id,
+    identifiers={(DOMAIN, entry_device_id(entry))},
+    name=entry_device_name(entry),
+    manufacturer="M5Stack",
+    model="Tab5",
+  )
   bridge = Tab5Bridge(hass, entry)
   await bridge.async_setup()
   hass.data[DOMAIN]["entries"][entry.entry_id] = bridge
   entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+  await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
   await bridge.async_publish_config_to_device()
   return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   """Unload a config entry."""
-  bridge: Tab5Bridge = hass.data[DOMAIN]["entries"].pop(entry.entry_id)
-  await bridge.async_unload()
-  return True
+  bridge: Tab5Bridge | None = hass.data[DOMAIN]["entries"].get(entry.entry_id)
+  unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+  if unload_ok and bridge is not None:
+    await bridge.async_unload()
+    hass.data[DOMAIN]["entries"].pop(entry.entry_id, None)
+  return unload_ok
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -168,6 +184,9 @@ class Tab5Bridge:
     self.base_topic = _normalise_topic(data.get(CONF_BASE_TOPIC, DEFAULT_BASE), DEFAULT_BASE)
     self.ha_prefix = _normalise_topic(data.get(CONF_HA_PREFIX, DEFAULT_PREFIX), DEFAULT_PREFIX)
     raw_sensors = _unique_entities(list(data.get(CONF_SENSORS, [])))
+    raw_weathers = _unique_entities(list(data.get(CONF_WEATHERS, [])))
+    if raw_weathers:
+      raw_sensors = _unique_entities(raw_sensors + raw_weathers)
     self.weathers, self.sensors = _split_weather_entities(raw_sensors)
     self.lights: List[str] = _unique_entities(list(data.get(CONF_LIGHTS, [])))
     self.switches: List[str] = _unique_entities(list(data.get(CONF_SWITCHES, [])))
@@ -1273,6 +1292,13 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
   if not isinstance(sensors_raw, list):
     raise ValueError("invalid_sensors")
   sensors = [str(item).strip() for item in sensors_raw if str(item).strip()]
+
+  weathers_raw = payload.get("weathers") or []
+  if not isinstance(weathers_raw, list):
+    raise ValueError("invalid_weathers")
+  weathers = [str(item).strip() for item in weathers_raw if str(item).strip()]
+  if weathers:
+    sensors = _unique_entities(sensors + weathers)
 
   lights_raw = payload.get("lights") or []
   if not isinstance(lights_raw, list):

@@ -35,9 +35,6 @@ class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
   async def async_step_user(self, user_input: Dict[str, Any] | None = None):
     errors: Dict[str, str] = {}
-    if self._async_current_entries():
-      return self.async_abort(reason="single_instance_allowed")
-
     defaults = _entry_to_form_data(user_input or {})
 
     if user_input is not None:

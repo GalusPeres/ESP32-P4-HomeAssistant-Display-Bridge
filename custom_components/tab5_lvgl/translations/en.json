@@ -17,9 +17,6 @@
     },
     "error": {
       "invalid_scene_map": "Scene aliases must follow the pattern alias=scene.entity_id (one per line)."
-    },
-    "abort": {
-      "single_instance_allowed": "Only one Tab5 LVGL bridge can be configured."
     }
   },
   "options": {
