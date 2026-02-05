@@ -1006,6 +1006,31 @@ def _fallback_icon_from_state(state: State) -> Optional[str]:
   unit = str(attrs.get("unit_of_measurement") or "").strip()
   unit_norm = unit.lower().replace(" ", "")
 
+  def _battery_icon_from_state() -> Optional[str]:
+    raw = attrs.get("battery_level")
+    if raw is None:
+      raw = state.state
+    if raw is None:
+      return None
+    if isinstance(raw, str):
+      raw = raw.strip()
+      if raw.endswith("%"):
+        raw = raw[:-1].strip()
+    try:
+      level = float(raw)
+    except (TypeError, ValueError):
+      return None
+    if level < 0:
+      level = 0
+    if level >= 95:
+      return "mdi:battery"
+    bucket = int(level // 10) * 10
+    if bucket <= 0:
+      bucket = 10
+    if bucket >= 100:
+      return "mdi:battery"
+    return f"mdi:battery-{bucket}"
+
   if domain == "light":
     return "mdi:lightbulb"
   if domain == "switch":
@@ -1014,6 +1039,16 @@ def _fallback_icon_from_state(state: State) -> Optional[str]:
     return "mdi:palette"
 
   if domain == "sensor":
+    is_battery_like = device_class == "battery"
+    if not is_battery_like and unit_norm in {"%", "percent", "percentage"}:
+      name = str(attrs.get("friendly_name") or state.name or "").lower()
+      if "battery" in name or "batterie" in name or "soc" in entity_id:
+        is_battery_like = True
+    if is_battery_like:
+      icon = _battery_icon_from_state()
+      if icon:
+        return icon
+      return "mdi:battery"
     device_class_icons = {
       "temperature": "mdi:thermometer",
       "humidity": "mdi:water-percent",
@@ -1022,7 +1057,6 @@ def _fallback_icon_from_state(state: State) -> Optional[str]:
       "voltage": "mdi:flash",
       "current": "mdi:flash",
       "energy": "mdi:lightning-bolt",
-      "battery": "mdi:battery",
       "pressure": "mdi:gauge",
     }
     if device_class in device_class_icons:
