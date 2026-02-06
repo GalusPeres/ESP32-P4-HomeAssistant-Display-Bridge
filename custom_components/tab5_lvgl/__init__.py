@@ -83,7 +83,7 @@ LIGHT_SERVICE_FIELDS = {
 SERVICE_SCHEMA = vol.Schema({vol.Optional("entry_id"): cv.string})
 
 FORECAST_TYPE = "daily"
-FORECAST_LIMIT = 5
+FORECAST_LIMIT = 8
 FORECAST_CACHE_TTL = timedelta(minutes=10)
 
 
