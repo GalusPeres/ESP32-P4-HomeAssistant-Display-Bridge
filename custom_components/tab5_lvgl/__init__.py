@@ -513,13 +513,13 @@ class Tab5Bridge:
     )
 
   async def _async_handle_scene_command(self, msg: ReceiveMessage) -> None:
-    """Execute scene commands originating from the Tab5."""
+    """Execute scene/script commands originating from the Tab5."""
     payload = msg.payload.strip()
     if not payload:
       return
 
     entity_id: Optional[str]
-    if payload.startswith("scene."):
+    if payload.startswith("scene.") or payload.startswith("script."):
       entity_id = payload
     else:
       entity_id = self.scene_map.get(payload.lower())
@@ -528,8 +528,9 @@ class Tab5Bridge:
       _LOGGER.warning("Unhandled scene command from Tab5: %s", payload)
       return
 
+    domain = entity_id.split(".")[0]
     await self.hass.services.async_call(
-      "scene",
+      domain,
       "turn_on",
       {"entity_id": entity_id},
       blocking=False,
