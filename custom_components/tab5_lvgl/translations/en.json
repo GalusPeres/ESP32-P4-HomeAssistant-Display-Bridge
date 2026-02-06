@@ -3,40 +3,40 @@
     "step": {
       "user": {
         "title": "Tab5 LVGL",
-        "description": "Configure how Home Assistant mirrors entities to the Tab5 (sensors, lights, switches). Scene aliases use one entry per line: `alias=scene.entity_id`.",
+        "description": "Configure how Home Assistant mirrors entities to the Tab5 (sensors, lights, switches). Aliases use one entry per line: `alias=scene.entity_id` or `alias=script.entity_id`.",
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
           "sensors": "Sensors",
           "lights": "Lights",
           "switches": "Switches",
-          "scene_entities": "Scenes",
-          "scene_map_text": "Scene aliases"
+          "scene_entities": "Scenes / Scripts",
+          "scene_map_text": "Scene / Script aliases"
         }
       }
     },
     "error": {
-      "invalid_scene_map": "Scene aliases must follow the pattern alias=scene.entity_id (one per line)."
+      "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line)."
     }
   },
   "options": {
     "step": {
       "user": {
         "title": "Tab5 LVGL",
-        "description": "Update the MQTT bridge settings. Scene aliases use one entry per line: `alias=scene.entity_id`.",
+        "description": "Update the MQTT bridge settings. Aliases use one entry per line: `alias=scene.entity_id` or `alias=script.entity_id`.",
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
           "sensors": "Sensors",
           "lights": "Lights",
           "switches": "Switches",
-          "scene_entities": "Scenes",
-          "scene_map_text": "Scene aliases"
+          "scene_entities": "Scenes / Scripts",
+          "scene_map_text": "Scene / Script aliases"
         }
       }
     },
     "error": {
-      "invalid_scene_map": "Scene aliases must follow the pattern alias=scene.entity_id (one per line)."
+      "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line)."
     }
   }
 }

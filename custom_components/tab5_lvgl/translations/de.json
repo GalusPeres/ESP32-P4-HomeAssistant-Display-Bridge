@@ -3,40 +3,40 @@
     "step": {
       "user": {
         "title": "Tab5 LVGL",
-        "description": "Richte die MQTT-Bridge ein (Sensoren, Lichter, Schalter). Szenen-Alias jeweils eine Zeile: `alias=scene.entity_id`.",
+        "description": "Richte die MQTT-Bridge ein (Sensoren, Lichter, Schalter). Alias jeweils eine Zeile: `alias=scene.entity_id` oder `alias=script.entity_id`.",
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
           "sensors": "Sensoren",
           "lights": "Lichter",
           "switches": "Schalter",
-          "scene_entities": "Szenen",
-          "scene_map_text": "Szenen-Alias"
+          "scene_entities": "Szenen / Scripts",
+          "scene_map_text": "Szenen- / Script-Alias"
         }
       }
     },
     "error": {
-      "invalid_scene_map": "Szenen-Alias muessen dem Muster alias=scene.entity_id folgen (eine Zeile pro Alias)."
+      "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias)."
     }
   },
   "options": {
     "step": {
       "user": {
         "title": "Tab5 LVGL",
-        "description": "Passe die Bridge-Einstellungen an. Alias-Format: `alias=scene.entity_id` pro Zeile.",
+        "description": "Passe die Bridge-Einstellungen an. Alias-Format: `alias=scene.entity_id` oder `alias=script.entity_id` pro Zeile.",
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
           "sensors": "Sensoren",
           "lights": "Lichter",
           "switches": "Schalter",
-          "scene_entities": "Szenen",
-          "scene_map_text": "Szenen-Alias"
+          "scene_entities": "Szenen / Scripts",
+          "scene_map_text": "Szenen- / Script-Alias"
         }
       }
     },
     "error": {
-      "invalid_scene_map": "Szenen-Alias muessen alias=scene.entity_id pro Zeile nutzen."
+      "invalid_scene_map": "Alias muss dem Muster alias=entity_id pro Zeile folgen."
     }
   }
 }

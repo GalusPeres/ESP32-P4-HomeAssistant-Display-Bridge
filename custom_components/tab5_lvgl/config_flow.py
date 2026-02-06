@@ -117,7 +117,7 @@ def _build_schema(defaults: Dict[str, Any]) -> vol.Schema:
         selector.EntitySelectorConfig(domain=["switch"], multiple=True)
       ),
       vol.Optional(CONF_SCENE_ENTITIES, default=defaults.get(CONF_SCENE_ENTITIES, [])): selector.EntitySelector(
-        selector.EntitySelectorConfig(domain=["scene"], multiple=True)
+        selector.EntitySelectorConfig(domain=["scene", "script"], multiple=True)
       ),
       vol.Optional(CONF_SCENE_MAP_TEXT, default=defaults.get(CONF_SCENE_MAP_TEXT, "")): selector.TextSelector(
         selector.TextSelectorConfig(multiline=True)
