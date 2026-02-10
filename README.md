@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.36 (2026-02-10)
+- Version bump for HACS update detection
+
 ### 0.2.35 (2026-02-10)
 - Add native battery sensor entity (`sensor.tab5_batterie`) from `base_topic/sensor/soc_pct`
 - Publish live Tab5 battery SoC snapshot at MQTT connect and every telemetry cycle
