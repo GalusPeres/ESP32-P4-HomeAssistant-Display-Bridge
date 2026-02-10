@@ -31,6 +31,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 try:
   from homeassistant.helpers.icon import icon_for_entity
@@ -187,10 +188,12 @@ class Tab5Bridge:
     raw_weathers = _unique_entities(list(data.get(CONF_WEATHERS, [])))
     if raw_weathers:
       raw_sensors = _unique_entities(raw_sensors + raw_weathers)
-    self.weathers, self.sensors = _split_weather_entities(raw_sensors)
+    self.weathers, configured_sensors = _split_weather_entities(raw_sensors)
+    self._configured_sensors: List[str] = configured_sensors
+    self.sensors: List[str] = []
     self.lights: List[str] = _unique_entities(list(data.get(CONF_LIGHTS, [])))
     self.switches: List[str] = _unique_entities(list(data.get(CONF_SWITCHES, [])))
-    self.tracked_entities: List[str] = _unique_entities(self.sensors + self.lights + self.switches + self.weathers)
+    self.tracked_entities: List[str] = []
     self.scene_map: Dict[str, str] = {
       (alias or "").lower(): entity
       for alias, entity in (data.get(CONF_SCENE_MAP, {}) or {}).items()
@@ -214,9 +217,33 @@ class Tab5Bridge:
     self._icon_cache: Dict[str, str] = {}
     self._icon_refresh_handle = None
     self._forecast_cache: Dict[str, Tuple[datetime, List[Dict[str, Any]]]] = {}
+    self._refresh_runtime_entity_lists()
+
+  def _resolve_internal_sensor_entities(self) -> List[str]:
+    """Find integration-owned sensor entities (battery/external temp)."""
+    registry = er.async_get(self.hass)
+    result: List[str] = []
+    for entry in registry.entities.values():
+      if entry.config_entry_id != self.entry.entry_id:
+        continue
+      if entry.domain != "sensor":
+        continue
+      if entry.disabled_by is not None:
+        continue
+      unique_id = (entry.unique_id or "").strip().lower()
+      if unique_id.endswith("_battery_soc") or unique_id.endswith("_external_temperature"):
+        result.append(entry.entity_id)
+    return _unique_entities(result)
+
+  def _refresh_runtime_entity_lists(self) -> None:
+    """Keep runtime sensor/tracked lists in sync with generated entities."""
+    internal_sensors = self._resolve_internal_sensor_entities()
+    self.sensors = _unique_entities(self._configured_sensors + internal_sensors)
+    self.tracked_entities = _unique_entities(self.sensors + self.lights + self.switches + self.weathers)
 
   async def async_setup(self) -> None:
     """Subscribe to MQTT topics and start observers."""
+    self._refresh_runtime_entity_lists()
     self._unsub_connected = await mqtt.async_subscribe(
       self.hass,
       f"{self.base_topic}/stat/connected",
@@ -312,6 +339,7 @@ class Tab5Bridge:
   async def async_publish_config_to_device(self) -> None:
     if not self.config_topic or not self.device_id:
       return
+    self._refresh_runtime_entity_lists()
     payload = json.dumps(
       {
         "device_id": self.device_id,
