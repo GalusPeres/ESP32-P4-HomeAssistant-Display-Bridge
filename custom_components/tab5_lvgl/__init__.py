@@ -430,9 +430,18 @@ class Tab5Bridge:
     if stat not in {"mean", "min", "max", "last"}:
       stat = "mean"
 
+    state = self.hass.states.get(entity_id)
+    current_numeric = _coerce_float(state.state) if state else None
+
+    def _empty_values_with_current() -> List[Optional[float]]:
+      values: List[Optional[float]] = [None] * points
+      if points > 0 and current_numeric is not None:
+        values[-1] = round(current_numeric, 3)
+      return values
+
     def _fetch_history_values() -> List[Optional[float]]:
       if points <= 0 or (state_changes_during_period is None and get_significant_states is None):
-        return [None] * points
+        return _empty_values_with_current()
 
       history = None
       if state_changes_during_period is not None:
@@ -464,7 +473,7 @@ class Tab5Bridge:
 
       states = history.get(entity_id, []) if history else []
       if not states:
-        return [None] * points
+        return _empty_values_with_current()
 
       bucket_seconds = max(period_minutes, 1) * 60
       sums = [0.0] * points
@@ -494,8 +503,8 @@ class Tab5Bridge:
         lasts[idx] = value
 
       values: List[Optional[float]] = []
-      prev_value: Optional[float] = None
       for idx in range(points):
+        value: Optional[float] = None
         if counts[idx] > 0:
           if stat == "min":
             value = mins[idx]
@@ -505,16 +514,16 @@ class Tab5Bridge:
             value = lasts[idx]
           else:
             value = sums[idx] / counts[idx]
-          prev_value = value
-        else:
-          value = prev_value
         values.append(round(value, 3) if value is not None else None)
+
+      if not any(v is not None for v in values):
+        return _empty_values_with_current()
 
       return values
 
     values = await get_instance(self.hass).async_add_executor_job(_fetch_history_values)
-
-    state = self.hass.states.get(entity_id)
+    numeric_points = sum(1 for v in values if v is not None)
+    _LOGGER.debug("Tab5 history response for %s: %d/%d points", entity_id, numeric_points, len(values))
     response: Dict[str, Any] = {
       "entity_id": entity_id,
       "hours": hours,
