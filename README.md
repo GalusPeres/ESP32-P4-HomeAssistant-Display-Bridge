@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.38 (2026-02-10)
+- Release with plain SemVer tag to maximize HACS version detection compatibility
+
 ### 0.2.37 (2026-02-10)
 - Version bump with `v` tag release for HACS compatibility refresh
 
