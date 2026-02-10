@@ -60,7 +60,7 @@ from .device_helpers import entry_device_id, entry_device_name
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["light", "select", "switch"]
+PLATFORMS = ["light", "select", "switch", "sensor"]
 
 LIGHT_SERVICE_FIELDS = {
   "transition",

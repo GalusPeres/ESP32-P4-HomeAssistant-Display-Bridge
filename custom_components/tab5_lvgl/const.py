@@ -23,6 +23,7 @@ TOPIC_DISPLAY_ROTATE = "display_rotate"
 TOPIC_DISPLAY_SLEEP = "display_sleep"
 TOPIC_SLEEP_MAINS = "sleep_mains"
 TOPIC_SLEEP_BATTERY = "sleep_battery"
+TOPIC_SENSOR_SOC = "soc_pct"
 
 SLEEP_OPTIONS = ["5 s", "15 s", "30 s", "60 s", "5 min", "15 min", "30 min", "60 min", "Nie"]
 

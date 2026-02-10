@@ -64,3 +64,7 @@ def command_topic(base_topic: str, leaf: str) -> str:
 
 def state_topic(base_topic: str, leaf: str) -> str:
     return f"{base_topic}/stat/{leaf}"
+
+
+def sensor_topic(base_topic: str, leaf: str) -> str:
+    return f"{base_topic}/sensor/{leaf}"

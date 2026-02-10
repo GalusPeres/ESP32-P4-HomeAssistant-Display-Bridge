@@ -67,6 +67,11 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.35 (2026-02-10)
+- Add native battery sensor entity (`sensor.tab5_batterie`) from `base_topic/sensor/soc_pct`
+- Publish live Tab5 battery SoC snapshot at MQTT connect and every telemetry cycle
+- Extend manifest metadata for HACS (`issue_tracker`, `integration_type`)
+
 ### 0.2.11 (2025-12-22)
 - Use state history API for full 5-minute buckets
 

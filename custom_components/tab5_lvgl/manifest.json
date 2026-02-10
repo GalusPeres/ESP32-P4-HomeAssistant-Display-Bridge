@@ -1,12 +1,14 @@
 {
   "domain": "tab5_lvgl",
   "name": "Tab5 LVGL MQTT Bridge",
-  "version": "0.2.34",
+  "version": "0.2.35",
   "documentation": "https://github.com/GalusPeres/ha-tab5-mqtt-bridge",
+  "issue_tracker": "https://github.com/GalusPeres/ha-tab5-mqtt-bridge/issues",
   "requirements": [],
   "dependencies": ["mqtt"],
   "after_dependencies": ["recorder"],
   "codeowners": ["@GalusPeres"],
+  "integration_type": "hub",
   "iot_class": "local_push",
   "config_flow": true
 }
