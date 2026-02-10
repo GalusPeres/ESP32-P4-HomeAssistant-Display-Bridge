@@ -67,6 +67,9 @@ Payload formats:
 
 ## Changelog
 
+### 0.2.37 (2026-02-10)
+- Version bump with `v` tag release for HACS compatibility refresh
+
 ### 0.2.36 (2026-02-10)
 - Version bump for HACS update detection
 
