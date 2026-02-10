@@ -35,7 +35,8 @@ async def async_setup_entry(
 class Tab5BatterySensor(SensorEntity):
     """Battery state-of-charge in percent."""
 
-    _attr_name = "Batterie"
+    _attr_name = "Tab5 Intern Batterie SoC (M5.Power)"
+    _attr_object_id = "tab5_internal_battery_soc"
     _attr_icon = "mdi:battery"
     _attr_native_unit_of_measurement = "%"
     _attr_device_class = SensorDeviceClass.BATTERY
@@ -90,7 +91,7 @@ class Tab5BatterySensor(SensorEntity):
 class Tab5ExternalTemperatureSensor(SensorEntity):
     """External DS18x20 temperature from Tab5."""
 
-    _attr_name = "External Temperature"
+    _attr_name = "Tab5 Intern DS18x20 Temperatur (GPIO 1/50)"
     _attr_object_id = "tab5_external_temperature"
     _attr_icon = "mdi:thermometer"
     _attr_native_unit_of_measurement = "C"

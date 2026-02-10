@@ -134,6 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     manufacturer="M5Stack",
     model="Tab5",
   )
+  _migrate_internal_sensor_entity_ids(hass, entry)
   bridge = Tab5Bridge(hass, entry)
   await bridge.async_setup()
   hass.data[DOMAIN]["entries"][entry.entry_id] = bridge
@@ -141,6 +142,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
   await bridge.async_publish_config_to_device()
   return True
+
+
+def _migrate_internal_sensor_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
+  """Normalize legacy internal sensor entity IDs to stable IDs."""
+  registry = er.async_get(hass)
+  targets = {
+    "_battery_soc": "sensor.tab5_internal_battery_soc",
+    "_external_temperature": "sensor.tab5_external_temperature",
+  }
+
+  for reg_entry in registry.entities.values():
+    if reg_entry.config_entry_id != entry.entry_id:
+      continue
+    if reg_entry.domain != "sensor":
+      continue
+    unique_id = (reg_entry.unique_id or "").strip().lower()
+    if not unique_id:
+      continue
+
+    target_entity_id = None
+    for suffix, target in targets.items():
+      if unique_id.endswith(suffix):
+        target_entity_id = target
+        break
+
+    if not target_entity_id:
+      continue
+    if reg_entry.entity_id == target_entity_id:
+      continue
+    if registry.async_get(target_entity_id) is not None:
+      continue
+
+    try:
+      registry.async_update_entity(reg_entry.entity_id, new_entity_id=target_entity_id)
+      _LOGGER.info("Tab5 entity migration: %s -> %s", reg_entry.entity_id, target_entity_id)
+    except (ValueError, TypeError) as err:
+      _LOGGER.warning(
+        "Tab5 entity migration failed for %s -> %s: %s",
+        reg_entry.entity_id,
+        target_entity_id,
+        err,
+      )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
