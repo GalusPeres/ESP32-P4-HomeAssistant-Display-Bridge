@@ -263,7 +263,7 @@ class Tab5Bridge:
     self._refresh_runtime_entity_lists()
 
   def _resolve_internal_sensor_entities(self) -> List[str]:
-    """Find integration-owned sensor entities (battery/external temp)."""
+    """Find all integration-owned sensor entities for this Tab5 entry."""
     registry = er.async_get(self.hass)
     result: List[str] = []
     for entry in registry.entities.values():
@@ -273,8 +273,7 @@ class Tab5Bridge:
         continue
       if entry.disabled_by is not None:
         continue
-      unique_id = (entry.unique_id or "").strip().lower()
-      if unique_id.endswith("_battery_soc") or unique_id.endswith("_external_temperature"):
+      if entry.entity_id:
         result.append(entry.entity_id)
     return _unique_entities(result)
 
