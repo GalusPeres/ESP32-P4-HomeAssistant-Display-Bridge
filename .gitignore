@@ -10,6 +10,7 @@ __pycache__/
 .idea/
 *.swp
 *.swo
+.claude/
 
 # OS
 .DS_Store
@@ -17,3 +18,6 @@ Thumbs.db
 
 # Home Assistant
 *.log
+
+# Local project/workspace folders
+arduino code/
