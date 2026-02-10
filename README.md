@@ -65,6 +65,13 @@ Payload formats:
 - MQTT broker configured in Home Assistant
 - Tab5 LVGL device with MQTT support
 
+## Release Process
+
+- Bump `custom_components/tab5_lvgl/manifest.json` version
+- Commit and push to `main`
+- Create and push a `v*` tag (example: `v0.2.46`)
+- GitHub Actions now auto-creates the matching GitHub Release for HACS
+
 ## Changelog
 
 ### 0.2.38 (2026-02-10)
