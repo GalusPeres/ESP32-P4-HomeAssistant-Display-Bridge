@@ -17,6 +17,8 @@ from .const import (
   CONF_DEVICE_NAME,
   CONF_HA_PREFIX,
   CONF_LIGHTS,
+  CONF_MANUFACTURER,
+  CONF_MODEL,
   CONF_SCENE_ENTITIES,
   CONF_SCENE_MAP,
   CONF_SCENE_MAP_TEXT,
@@ -115,6 +117,8 @@ def _build_schema(defaults: Dict[str, Any]) -> vol.Schema:
       vol.Required(CONF_BASE_TOPIC, default=defaults.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
       vol.Required(CONF_HA_PREFIX, default=defaults.get(CONF_HA_PREFIX, DEFAULT_PREFIX)): str,
       vol.Optional(CONF_DEVICE_NAME, default=defaults.get(CONF_DEVICE_NAME, "")): str,
+      vol.Optional(CONF_MANUFACTURER, default=defaults.get(CONF_MANUFACTURER, "")): str,
+      vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, "")): str,
       vol.Optional(CONF_SENSORS, default=defaults.get(CONF_SENSORS, [])): selector.EntitySelector(
         selector.EntitySelectorConfig(multiple=True)
       ),
@@ -139,6 +143,8 @@ def _entry_to_form_data(source: Dict[str, Any]) -> Dict[str, Any]:
   data.setdefault(CONF_BASE_TOPIC, DEFAULT_BASE)
   data.setdefault(CONF_HA_PREFIX, DEFAULT_PREFIX)
   data.setdefault(CONF_DEVICE_NAME, "")
+  data.setdefault(CONF_MANUFACTURER, "")
+  data.setdefault(CONF_MODEL, "")
   data.setdefault(CONF_SENSORS, [])
   data.setdefault(CONF_LIGHTS, [])
   data.setdefault(CONF_SWITCHES, [])
@@ -202,6 +208,8 @@ def _convert_form_data(user_input: Dict[str, Any], current: Dict[str, Any] | Non
   scene_map.update(manual_map)
 
   device_name = (user_input.get(CONF_DEVICE_NAME) or current.get(CONF_DEVICE_NAME, "")).strip()
+  manufacturer = (user_input.get(CONF_MANUFACTURER) or current.get(CONF_MANUFACTURER, "")).strip()
+  model = (user_input.get(CONF_MODEL) or current.get(CONF_MODEL, "")).strip()
 
   updated = dict(current)
   updated[CONF_BASE_TOPIC] = base
@@ -211,10 +219,11 @@ def _convert_form_data(user_input: Dict[str, Any], current: Dict[str, Any] | Non
   updated[CONF_SWITCHES] = switches
   updated[CONF_SCENE_MAP] = scene_map
   updated[CONF_SCENE_MAP_TEXT] = scene_map_text
-  if device_name:
-    updated[CONF_DEVICE_NAME] = device_name
-  else:
-    updated.pop(CONF_DEVICE_NAME, None)
+  for key, val in ((CONF_DEVICE_NAME, device_name), (CONF_MANUFACTURER, manufacturer), (CONF_MODEL, model)):
+    if val:
+      updated[key] = val
+    else:
+      updated.pop(key, None)
   return updated
 
 
