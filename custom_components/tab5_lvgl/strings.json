@@ -2,32 +2,26 @@
   "config": {
     "step": {
       "user": {
-        "title": "LVGL MQTT Bridge",
-        "description": "Richte die MQTT-Bridge ein (Sensoren, Lichter, Schalter). Alias jeweils eine Zeile: `alias=scene.entity_id` oder `alias=script.entity_id`.",
+        "title": "Panel hinzuf\u00fcgen",
+        "description": "Neues LVGL-Panel einrichten. Entities werden automatisch von allen Panels geteilt.",
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
           "device_name": "Ger\u00e4tename (optional)",
           "manufacturer": "Hersteller (optional)",
-          "model": "Modell (optional)",
-          "sensors": "Sensoren",
-          "lights": "Lichter",
-          "switches": "Schalter",
-          "scene_entities": "Szenen / Scripts",
-          "scene_map_text": "Szenen- / Script-Alias"
+          "model": "Modell (optional)"
         }
       }
     },
     "error": {
-      "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias).",
-      "topic_already_configured": "Ein Ger\u00e4t mit diesem MQTT-Basis-Topic ist bereits konfiguriert."
+      "topic_already_configured": "Ein Panel mit diesem MQTT-Basis-Topic ist bereits konfiguriert."
     }
   },
   "options": {
     "step": {
       "user": {
-        "title": "LVGL MQTT Bridge",
-        "description": "Passe die Bridge-Einstellungen an. Alias-Format: `alias=scene.entity_id` oder `alias=script.entity_id` pro Zeile.",
+        "title": "Panel & Entities",
+        "description": "Panel-Einstellungen und geteilte Entity-Konfiguration. Entities gelten f\u00fcr alle Panels.",
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
@@ -43,7 +37,7 @@
       }
     },
     "error": {
-      "invalid_scene_map": "Alias muss dem Muster alias=entity_id pro Zeile folgen."
+      "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias)."
     }
   }
 }

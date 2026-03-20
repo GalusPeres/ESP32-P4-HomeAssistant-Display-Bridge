@@ -31,33 +31,40 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+#  Config flow — adding a new panel (device info only)
+# ---------------------------------------------------------------------------
+
 class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-  """Handle the initial config flow."""
+  """Handle adding a new panel."""
 
   VERSION = 1
 
   async def async_step_user(self, user_input: Dict[str, Any] | None = None):
     errors: Dict[str, str] = {}
-    defaults = _entry_to_form_data(user_input or {})
 
     if user_input is not None:
-      try:
-        data = _convert_form_data(user_input)
-        title = _entry_title(data)
-      except ValueError as err:
-        errors["base"] = err.args[0]
-      else:
-        base_topic = data.get(CONF_BASE_TOPIC)
-        for entry in self._async_current_entries():
-          if entry.data.get(CONF_BASE_TOPIC) == base_topic:
-            errors["base_topic"] = "topic_already_configured"
-            break
-        if not errors:
-          return self.async_create_entry(title=title, data=data)
+      base = _normalise_topic(user_input.get(CONF_BASE_TOPIC, DEFAULT_BASE), DEFAULT_BASE)
+      prefix = _normalise_topic(user_input.get(CONF_HA_PREFIX, DEFAULT_PREFIX), DEFAULT_PREFIX)
 
+      for entry in self._async_current_entries():
+        if entry.data.get(CONF_BASE_TOPIC) == base:
+          errors["base_topic"] = "topic_already_configured"
+          break
+
+      if not errors:
+        data: Dict[str, Any] = {CONF_BASE_TOPIC: base, CONF_HA_PREFIX: prefix}
+        for key in (CONF_DEVICE_NAME, CONF_MANUFACTURER, CONF_MODEL):
+          val = (user_input.get(key) or "").strip()
+          if val:
+            data[key] = val
+        title = _entry_title(data)
+        return self.async_create_entry(title=title, data=data)
+
+    defaults = user_input or {}
     return self.async_show_form(
       step_id="user",
-      data_schema=_build_schema(defaults),
+      data_schema=_build_device_schema(defaults),
       errors=errors,
     )
 
@@ -77,8 +84,12 @@ class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     return Tab5OptionsFlowHandler()
 
 
+# ---------------------------------------------------------------------------
+#  Options flow — device info + shared entity configuration
+# ---------------------------------------------------------------------------
+
 class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
-  """Allow editing the configuration via the UI."""
+  """Edit panel settings and shared entity configuration."""
 
   async def async_step_init(self, user_input: Dict[str, Any] | None = None):
     return await self.async_step_user(user_input)
@@ -86,11 +97,10 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
   async def async_step_user(self, user_input: Dict[str, Any] | None = None):
     errors: Dict[str, str] = {}
     current = dict(self.config_entry.data)
-    defaults = _entry_to_form_data(current)
 
     if user_input is not None:
       try:
-        data = _convert_form_data(user_input, current)
+        data = _convert_options_data(user_input, current)
       except ValueError as err:
         errors["base"] = err.args[0]
       else:
@@ -104,14 +114,33 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         self.hass.config_entries.async_update_entry(self.config_entry, data=data)
         return self.async_create_entry(title="", data={})
 
+    defaults = _entry_to_form_data(current)
     return self.async_show_form(
       step_id="user",
-      data_schema=_build_schema(defaults),
+      data_schema=_build_full_schema(defaults),
       errors=errors,
     )
 
 
-def _build_schema(defaults: Dict[str, Any]) -> vol.Schema:
+# ---------------------------------------------------------------------------
+#  Schemas
+# ---------------------------------------------------------------------------
+
+def _build_device_schema(defaults: Dict[str, Any]) -> vol.Schema:
+  """Schema for adding a new panel — device info only."""
+  return vol.Schema(
+    {
+      vol.Required(CONF_BASE_TOPIC, default=defaults.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
+      vol.Required(CONF_HA_PREFIX, default=defaults.get(CONF_HA_PREFIX, DEFAULT_PREFIX)): str,
+      vol.Optional(CONF_DEVICE_NAME, default=defaults.get(CONF_DEVICE_NAME, "")): str,
+      vol.Optional(CONF_MANUFACTURER, default=defaults.get(CONF_MANUFACTURER, "")): str,
+      vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, "")): str,
+    }
+  )
+
+
+def _build_full_schema(defaults: Dict[str, Any]) -> vol.Schema:
+  """Schema for options — device info + shared entity configuration."""
   return vol.Schema(
     {
       vol.Required(CONF_BASE_TOPIC, default=defaults.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
@@ -138,6 +167,10 @@ def _build_schema(defaults: Dict[str, Any]) -> vol.Schema:
   )
 
 
+# ---------------------------------------------------------------------------
+#  Helpers
+# ---------------------------------------------------------------------------
+
 def _entry_to_form_data(source: Dict[str, Any]) -> Dict[str, Any]:
   data = dict(source)
   data.setdefault(CONF_BASE_TOPIC, DEFAULT_BASE)
@@ -153,8 +186,7 @@ def _entry_to_form_data(source: Dict[str, Any]) -> Dict[str, Any]:
   return data
 
 
-def _convert_form_data(user_input: Dict[str, Any], current: Dict[str, Any] | None = None) -> Dict[str, Any]:
-  current = current or {}
+def _convert_options_data(user_input: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
   _LOGGER.debug("Tab5 options raw form data: %s", user_input)
 
   base = _normalise_topic(
@@ -259,7 +291,7 @@ def _entry_title(data: Dict[str, Any]) -> str:
   if device_id:
     suffix = device_id[-4:].upper()
     return f"Tab5 {suffix}"
-  return "Tab5 LVGL"
+  return "LVGL Panel"
 
 
 def _normalise_entity_list(values: Any) -> list[str]:

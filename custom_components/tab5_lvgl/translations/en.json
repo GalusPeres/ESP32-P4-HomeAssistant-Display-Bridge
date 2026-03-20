@@ -2,32 +2,26 @@
   "config": {
     "step": {
       "user": {
-        "title": "LVGL MQTT Bridge",
-        "description": "Configure how Home Assistant mirrors entities to the Tab5 (sensors, lights, switches). Aliases use one entry per line: `alias=scene.entity_id` or `alias=script.entity_id`.",
+        "title": "Add panel",
+        "description": "Set up a new LVGL panel. Entities are automatically shared across all panels.",
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
           "device_name": "Device name (optional)",
           "manufacturer": "Manufacturer (optional)",
-          "model": "Model (optional)",
-          "sensors": "Sensors",
-          "lights": "Lights",
-          "switches": "Switches",
-          "scene_entities": "Scenes / Scripts",
-          "scene_map_text": "Scene / Script aliases"
+          "model": "Model (optional)"
         }
       }
     },
     "error": {
-      "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line).",
-      "topic_already_configured": "A device with this MQTT base topic is already configured."
+      "topic_already_configured": "A panel with this MQTT base topic is already configured."
     }
   },
   "options": {
     "step": {
       "user": {
-        "title": "LVGL MQTT Bridge",
-        "description": "Update the MQTT bridge settings. Aliases use one entry per line: `alias=scene.entity_id` or `alias=script.entity_id`.",
+        "title": "Panel & Entities",
+        "description": "Panel settings and shared entity configuration. Entities apply to all panels.",
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
