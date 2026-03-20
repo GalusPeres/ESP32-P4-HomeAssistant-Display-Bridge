@@ -307,19 +307,17 @@ class Tab5Bridge:
       self._async_handle_scene_command,
     )
 
-    if self.lights:
-      self._unsub_light = await mqtt.async_subscribe(
-        self.hass,
-        f"{self.base_topic}/cmnd/light",
-        self._async_handle_light_command,
-      )
+    self._unsub_light = await mqtt.async_subscribe(
+      self.hass,
+      f"{self.base_topic}/cmnd/light",
+      self._async_handle_light_command,
+    )
 
-    if self.switches:
-      self._unsub_switch = await mqtt.async_subscribe(
-        self.hass,
-        f"{self.base_topic}/cmnd/switch",
-        self._async_handle_switch_command,
-      )
+    self._unsub_switch = await mqtt.async_subscribe(
+      self.hass,
+      f"{self.base_topic}/cmnd/switch",
+      self._async_handle_switch_command,
+    )
 
     if self.tracked_entities:
       self._unsub_state = async_track_state_change_event(
@@ -735,7 +733,7 @@ class Tab5Bridge:
   def _resolve_target_entity(self, entity_id: Optional[str], candidates: List[str]) -> Optional[str]:
     if entity_id:
       entity_id = entity_id.strip()
-      if entity_id in candidates:
+      if "." in entity_id:
         return entity_id
       return None
     if len(candidates) == 1:
