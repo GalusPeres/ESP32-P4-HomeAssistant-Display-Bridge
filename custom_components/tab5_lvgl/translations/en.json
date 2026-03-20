@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Tab5 LVGL",
+        "title": "LVGL MQTT Bridge",
         "description": "Configure how Home Assistant mirrors entities to the Tab5 (sensors, lights, switches). Aliases use one entry per line: `alias=scene.entity_id` or `alias=script.entity_id`.",
         "data": {
           "base_topic": "MQTT base topic",
@@ -26,7 +26,7 @@
   "options": {
     "step": {
       "user": {
-        "title": "Tab5 LVGL",
+        "title": "LVGL MQTT Bridge",
         "description": "Update the MQTT bridge settings. Aliases use one entry per line: `alias=scene.entity_id` or `alias=script.entity_id`.",
         "data": {
           "base_topic": "MQTT base topic",
