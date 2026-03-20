@@ -287,10 +287,47 @@ class Tab5Bridge:
         result.append(entry.entity_id)
     return _unique_entities(result)
 
+  def _collect_all_entries_entities(self) -> Dict[str, Any]:
+    """Merge entity lists from all config entries in this integration."""
+    all_sensors: List[str] = []
+    all_lights: List[str] = []
+    all_switches: List[str] = []
+    all_weathers: List[str] = []
+    all_scene_map: Dict[str, str] = {}
+    for entry in self.hass.config_entries.async_entries(DOMAIN):
+      data = dict(entry.data or {})
+      if entry.options:
+        data.update(entry.options)
+      raw_sensors = list(data.get(CONF_SENSORS, []))
+      raw_weathers = list(data.get(CONF_WEATHERS, []))
+      weathers, sensors = _split_weather_entities(
+        _unique_entities(raw_sensors + raw_weathers) if raw_weathers else raw_sensors
+      )
+      all_sensors.extend(sensors)
+      all_lights.extend(list(data.get(CONF_LIGHTS, [])))
+      all_switches.extend(list(data.get(CONF_SWITCHES, [])))
+      all_weathers.extend(weathers)
+      for alias, entity in (data.get(CONF_SCENE_MAP, {}) or {}).items():
+        if alias and entity:
+          all_scene_map.setdefault((alias or "").lower(), entity)
+    return {
+      "sensors": _unique_entities(all_sensors),
+      "lights": _unique_entities(all_lights),
+      "switches": _unique_entities(all_switches),
+      "weathers": _unique_entities(all_weathers),
+      "scene_map": all_scene_map,
+    }
+
   def _refresh_runtime_entity_lists(self) -> None:
-    """Keep runtime sensor/tracked lists in sync with generated entities."""
+    """Keep runtime sensor/tracked lists in sync — merges from all entries."""
+    merged = self._collect_all_entries_entities()
     internal_sensors = self._resolve_internal_sensor_entities()
-    self.sensors = _unique_entities(self._configured_sensors + internal_sensors)
+    self._configured_sensors = merged["sensors"]
+    self.sensors = _unique_entities(merged["sensors"] + internal_sensors)
+    self.lights = merged["lights"]
+    self.switches = merged["switches"]
+    self.weathers = merged["weathers"]
+    self.scene_map.update(merged["scene_map"])
     self.tracked_entities = _unique_entities(self.sensors + self.lights + self.switches + self.weathers)
 
   async def async_setup(self) -> None:
