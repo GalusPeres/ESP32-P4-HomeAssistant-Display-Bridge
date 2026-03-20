@@ -42,8 +42,11 @@ from homeassistant.util import dt as dt_util
 from .const import (
   CONF_BASE_TOPIC,
   CONF_DEVICE_ID,
+  CONF_DEVICE_NAME,
   CONF_HA_PREFIX,
   CONF_LIGHTS,
+  CONF_MANUFACTURER,
+  CONF_MODEL,
   CONF_SCENE_MAP,
   CONF_SENSORS,
   CONF_SWITCHES,
@@ -57,7 +60,7 @@ from .const import (
   HISTORY_RESPONSE_SUFFIX,
   SERVICE_PUBLISH_SNAPSHOT,
 )
-from .device_helpers import entry_device_id, entry_device_name
+from .device_helpers import entry_device_id, entry_device_info, entry_device_name
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -127,12 +130,13 @@ async def async_setup(hass: HomeAssistant, config: Dict[str, Any]) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   """Create the bridge instance for a config entry."""
   device_reg = dr.async_get(hass)
+  dev_info = entry_device_info(entry)
   device_reg.async_get_or_create(
     config_entry_id=entry.entry_id,
-    identifiers={(DOMAIN, entry_device_id(entry))},
-    name=entry_device_name(entry),
-    manufacturer="M5Stack",
-    model="Tab5",
+    identifiers=dev_info["identifiers"],
+    name=dev_info["name"],
+    manufacturer=dev_info["manufacturer"],
+    model=dev_info["model"],
   )
   _migrate_internal_sensor_entity_ids(hass, entry)
   bridge = Tab5Bridge(hass, entry)
@@ -145,7 +149,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 def _migrate_internal_sensor_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
-  """Normalize legacy internal sensor entity IDs to stable IDs."""
+  """Normalize legacy internal sensor entity IDs to stable IDs.
+
+  Only runs when there is a single config entry to avoid collisions
+  between multiple devices.
+  """
+  if len(hass.config_entries.async_entries(DOMAIN)) > 1:
+    return
   registry = er.async_get(hass)
   targets = {
     "_battery_soc": "sensor.tab5_internal_battery_soc",
@@ -1433,7 +1443,11 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
       continue
     scene_map[str(alias).lower()] = str(entity)
 
-  return {
+  manufacturer = str(payload.get("manufacturer") or "").strip()
+  model = str(payload.get("model") or "").strip()
+  device_name = str(payload.get("device_name") or "").strip()
+
+  data = {
     CONF_DEVICE_ID: device_id,
     CONF_BASE_TOPIC: base,
     CONF_HA_PREFIX: prefix,
@@ -1442,6 +1456,13 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     CONF_SWITCHES: switches,
     CONF_SCENE_MAP: scene_map,
   }
+  if manufacturer:
+    data[CONF_MANUFACTURER] = manufacturer
+  if model:
+    data[CONF_MODEL] = model
+  if device_name:
+    data[CONF_DEVICE_NAME] = device_name
+  return data
 
 
 def _find_entry_by_device_id(hass: HomeAssistant, device_id: Optional[str]) -> Optional[ConfigEntry]:
@@ -1463,6 +1484,9 @@ def _find_entry_by_base(hass: HomeAssistant, base_topic: Optional[str]) -> Optio
 
 
 def _entry_title(data: Dict[str, Any]) -> str:
+  device_name = data.get(CONF_DEVICE_NAME)
+  if device_name:
+    return device_name
   device_id = data.get(CONF_DEVICE_ID)
   if device_id:
     suffix = device_id[-4:].upper()

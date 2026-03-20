@@ -10,6 +10,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from .const import (
     CONF_BASE_TOPIC,
     CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    CONF_MANUFACTURER,
+    CONF_MODEL,
     DEFAULT_BASE,
     DOMAIN,
 )
@@ -41,6 +44,9 @@ def entry_device_id(entry: ConfigEntry) -> str:
 
 def entry_device_name(entry: ConfigEntry) -> str:
     data = _merged_entry_data(entry)
+    custom_name = data.get(CONF_DEVICE_NAME)
+    if custom_name:
+        return custom_name
     device_id = data.get(CONF_DEVICE_ID)
     if device_id:
         suffix = str(device_id)[-4:].upper()
@@ -49,12 +55,15 @@ def entry_device_name(entry: ConfigEntry) -> str:
 
 
 def entry_device_info(entry: ConfigEntry) -> DeviceInfo:
+    data = _merged_entry_data(entry)
     device_id = entry_device_id(entry)
+    manufacturer = data.get(CONF_MANUFACTURER) or "M5Stack"
+    model = data.get(CONF_MODEL) or "Tab5"
     return DeviceInfo(
         identifiers={(DOMAIN, device_id)},
         name=entry_device_name(entry),
-        manufacturer="M5Stack",
-        model="Tab5",
+        manufacturer=manufacturer,
+        model=model,
     )
 
 

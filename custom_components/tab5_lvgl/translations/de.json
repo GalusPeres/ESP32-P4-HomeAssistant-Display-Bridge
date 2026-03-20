@@ -7,6 +7,7 @@
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
+          "device_name": "Ger\u00e4tename (optional)",
           "sensors": "Sensoren",
           "lights": "Lichter",
           "switches": "Schalter",
@@ -16,7 +17,8 @@
       }
     },
     "error": {
-      "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias)."
+      "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias).",
+      "topic_already_configured": "Ein Ger\u00e4t mit diesem MQTT-Basis-Topic ist bereits konfiguriert."
     }
   },
   "options": {
@@ -27,6 +29,7 @@
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
+          "device_name": "Ger\u00e4tename (optional)",
           "sensors": "Sensoren",
           "lights": "Lichter",
           "switches": "Schalter",

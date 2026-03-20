@@ -30,6 +30,7 @@ async def async_setup_entry(
 class Tab5BrightnessNumber(NumberEntity):
     """Display brightness control."""
 
+    _attr_has_entity_name = True
     _attr_name = "Display Helligkeit"
     _attr_icon = "mdi:brightness-6"
     _attr_native_min_value = 75

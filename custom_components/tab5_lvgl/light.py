@@ -43,6 +43,7 @@ async def async_setup_entry(
 class Tab5DisplayLight(LightEntity):
     """Display brightness exposed as a light entity."""
 
+    _attr_has_entity_name = True
     _attr_name = "Display Helligkeit"
     _attr_icon = "mdi:brightness-6"
     _attr_entity_category = EntityCategory.CONFIG

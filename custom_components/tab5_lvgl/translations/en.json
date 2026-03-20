@@ -7,6 +7,7 @@
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
+          "device_name": "Device name (optional)",
           "sensors": "Sensors",
           "lights": "Lights",
           "switches": "Switches",
@@ -16,7 +17,8 @@
       }
     },
     "error": {
-      "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line)."
+      "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line).",
+      "topic_already_configured": "A device with this MQTT base topic is already configured."
     }
   },
   "options": {
@@ -27,6 +29,7 @@
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
+          "device_name": "Device name (optional)",
           "sensors": "Sensors",
           "lights": "Lights",
           "switches": "Switches",

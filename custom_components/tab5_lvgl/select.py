@@ -47,6 +47,7 @@ async def async_setup_entry(
 class Tab5SleepSelect(SelectEntity):
     """Auto-sleep select."""
 
+    _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.CONFIG
     _attr_options = SLEEP_OPTIONS
 

@@ -33,6 +33,7 @@ async def async_setup_entry(
 class Tab5RotateSwitch(SwitchEntity):
     """Switch to rotate the display 180 degrees."""
 
+    _attr_has_entity_name = True
     _attr_name = "Display Rotation"
     _attr_icon = "mdi:phone-rotate-portrait"
     _attr_entity_category = EntityCategory.CONFIG
@@ -86,6 +87,7 @@ class Tab5RotateSwitch(SwitchEntity):
 class Tab5DisplaySleepSwitch(SwitchEntity):
     """Switch to sleep/wake the display immediately."""
 
+    _attr_has_entity_name = True
     _attr_name = "Display Sleep"
     _attr_icon = "mdi:sleep"
     _attr_entity_category = EntityCategory.CONFIG

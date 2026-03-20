@@ -14,6 +14,7 @@ from homeassistant.helpers import selector
 from .const import (
   CONF_BASE_TOPIC,
   CONF_DEVICE_ID,
+  CONF_DEVICE_NAME,
   CONF_HA_PREFIX,
   CONF_LIGHTS,
   CONF_SCENE_ENTITIES,
@@ -44,7 +45,13 @@ class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
       except ValueError as err:
         errors["base"] = err.args[0]
       else:
-        return self.async_create_entry(title=title, data=data)
+        base_topic = data.get(CONF_BASE_TOPIC)
+        for entry in self._async_current_entries():
+          if entry.data.get(CONF_BASE_TOPIC) == base_topic:
+            errors["base_topic"] = "topic_already_configured"
+            break
+        if not errors:
+          return self.async_create_entry(title=title, data=data)
 
     return self.async_show_form(
       step_id="user",
@@ -107,6 +114,7 @@ def _build_schema(defaults: Dict[str, Any]) -> vol.Schema:
     {
       vol.Required(CONF_BASE_TOPIC, default=defaults.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
       vol.Required(CONF_HA_PREFIX, default=defaults.get(CONF_HA_PREFIX, DEFAULT_PREFIX)): str,
+      vol.Optional(CONF_DEVICE_NAME, default=defaults.get(CONF_DEVICE_NAME, "")): str,
       vol.Optional(CONF_SENSORS, default=defaults.get(CONF_SENSORS, [])): selector.EntitySelector(
         selector.EntitySelectorConfig(multiple=True)
       ),
@@ -130,6 +138,7 @@ def _entry_to_form_data(source: Dict[str, Any]) -> Dict[str, Any]:
   data = dict(source)
   data.setdefault(CONF_BASE_TOPIC, DEFAULT_BASE)
   data.setdefault(CONF_HA_PREFIX, DEFAULT_PREFIX)
+  data.setdefault(CONF_DEVICE_NAME, "")
   data.setdefault(CONF_SENSORS, [])
   data.setdefault(CONF_LIGHTS, [])
   data.setdefault(CONF_SWITCHES, [])
@@ -192,6 +201,8 @@ def _convert_form_data(user_input: Dict[str, Any], current: Dict[str, Any] | Non
   manual_map = _parse_scene_map(scene_map_text)
   scene_map.update(manual_map)
 
+  device_name = (user_input.get(CONF_DEVICE_NAME) or current.get(CONF_DEVICE_NAME, "")).strip()
+
   updated = dict(current)
   updated[CONF_BASE_TOPIC] = base
   updated[CONF_HA_PREFIX] = prefix
@@ -200,6 +211,10 @@ def _convert_form_data(user_input: Dict[str, Any], current: Dict[str, Any] | Non
   updated[CONF_SWITCHES] = switches
   updated[CONF_SCENE_MAP] = scene_map
   updated[CONF_SCENE_MAP_TEXT] = scene_map_text
+  if device_name:
+    updated[CONF_DEVICE_NAME] = device_name
+  else:
+    updated.pop(CONF_DEVICE_NAME, None)
   return updated
 
 
@@ -228,6 +243,9 @@ def _normalise_topic(value: str | None, default: str) -> str:
 
 
 def _entry_title(data: Dict[str, Any]) -> str:
+  device_name = data.get(CONF_DEVICE_NAME)
+  if device_name:
+    return device_name
   device_id = data.get(CONF_DEVICE_ID)
   if device_id:
     suffix = device_id[-4:].upper()
