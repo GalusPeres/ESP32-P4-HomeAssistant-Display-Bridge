@@ -131,13 +131,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   """Create the bridge instance for a config entry."""
   device_reg = dr.async_get(hass)
   dev_info = entry_device_info(entry)
-  device_reg.async_get_or_create(
-    config_entry_id=entry.entry_id,
-    identifiers=dev_info["identifiers"],
-    name=dev_info["name"],
-    manufacturer=dev_info["manufacturer"],
-    model=dev_info["model"],
-  )
+  kwargs = {
+    "config_entry_id": entry.entry_id,
+    "identifiers": dev_info["identifiers"],
+    "name": dev_info["name"],
+  }
+  if dev_info.get("manufacturer"):
+    kwargs["manufacturer"] = dev_info["manufacturer"]
+  if dev_info.get("model"):
+    kwargs["model"] = dev_info["model"]
+  device_reg.async_get_or_create(**kwargs)
   _migrate_internal_sensor_entity_ids(hass, entry)
   bridge = Tab5Bridge(hass, entry)
   await bridge.async_setup()
@@ -1525,5 +1528,5 @@ def _entry_title(data: Dict[str, Any]) -> str:
   device_id = data.get(CONF_DEVICE_ID)
   if device_id:
     suffix = device_id[-4:].upper()
-    return f"Tab5 {suffix}"
-  return "Tab5 LVGL"
+    return f"Panel {suffix}"
+  return "LVGL Panel"

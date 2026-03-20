@@ -265,7 +265,7 @@ def _entry_title(data: Dict[str, Any]) -> str:
     return device_name
   device_id = data.get(CONF_DEVICE_ID)
   if device_id:
-    return f"Tab5 {device_id[-4:].upper()}"
+    return f"Panel {device_id[-4:].upper()}"
   return "LVGL Panel"
 
 

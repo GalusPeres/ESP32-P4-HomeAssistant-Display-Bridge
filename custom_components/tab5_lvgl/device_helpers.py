@@ -50,15 +50,15 @@ def entry_device_name(entry: ConfigEntry) -> str:
     device_id = data.get(CONF_DEVICE_ID)
     if device_id:
         suffix = str(device_id)[-4:].upper()
-        return f"Tab5 {suffix}"
-    return "Tab5 LVGL"
+        return f"Panel {suffix}"
+    return "LVGL Panel"
 
 
 def entry_device_info(entry: ConfigEntry) -> DeviceInfo:
     data = _merged_entry_data(entry)
     device_id = entry_device_id(entry)
-    manufacturer = data.get(CONF_MANUFACTURER) or "M5Stack"
-    model = data.get(CONF_MODEL) or "Tab5"
+    manufacturer = data.get(CONF_MANUFACTURER) or None
+    model = data.get(CONF_MODEL) or None
     return DeviceInfo(
         identifiers={(DOMAIN, device_id)},
         name=entry_device_name(entry),
