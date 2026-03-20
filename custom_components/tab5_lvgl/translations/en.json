@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Add panel",
-        "description": "Set up a new LVGL panel. Entities are automatically shared across all panels.",
+        "description": "Set up a new LVGL panel.",
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
@@ -14,20 +14,31 @@
       }
     },
     "error": {
-      "topic_already_configured": "A panel with this MQTT base topic is already configured."
+      "topic_already_configured": "A panel with this MQTT topic is already configured."
     }
   },
   "options": {
     "step": {
-      "user": {
-        "title": "Panel & Entities",
-        "description": "Panel settings and shared entity configuration. Entities apply to all panels.",
+      "init": {
+        "menu_options": {
+          "panel": "Panel settings",
+          "entities": "Entity configuration"
+        }
+      },
+      "panel": {
+        "title": "Panel settings",
         "data": {
           "base_topic": "MQTT base topic",
           "ha_prefix": "HA entity prefix",
           "device_name": "Device name (optional)",
           "manufacturer": "Manufacturer (optional)",
-          "model": "Model (optional)",
+          "model": "Model (optional)"
+        }
+      },
+      "entities": {
+        "title": "Entity configuration",
+        "description": "Applies to all panels. Changes here affect every connected device.",
+        "data": {
           "sensors": "Sensors",
           "lights": "Lights",
           "switches": "Switches",

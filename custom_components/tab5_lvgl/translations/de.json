@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Panel hinzuf\u00fcgen",
-        "description": "Neues LVGL-Panel einrichten. Entities werden automatisch von allen Panels geteilt.",
+        "description": "Neues LVGL-Panel einrichten.",
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
@@ -14,20 +14,31 @@
       }
     },
     "error": {
-      "topic_already_configured": "Ein Panel mit diesem MQTT-Basis-Topic ist bereits konfiguriert."
+      "topic_already_configured": "Ein Panel mit diesem MQTT-Topic ist bereits konfiguriert."
     }
   },
   "options": {
     "step": {
-      "user": {
-        "title": "Panel & Entities",
-        "description": "Panel-Einstellungen und geteilte Entity-Konfiguration. Entities gelten f\u00fcr alle Panels.",
+      "init": {
+        "menu_options": {
+          "panel": "Panel-Einstellungen",
+          "entities": "Entity-Konfiguration"
+        }
+      },
+      "panel": {
+        "title": "Panel-Einstellungen",
         "data": {
           "base_topic": "MQTT-Basis",
           "ha_prefix": "HA-Praefix",
           "device_name": "Ger\u00e4tename (optional)",
           "manufacturer": "Hersteller (optional)",
-          "model": "Modell (optional)",
+          "model": "Modell (optional)"
+        }
+      },
+      "entities": {
+        "title": "Entity-Konfiguration",
+        "description": "Gilt f\u00fcr alle Panels. \u00c4nderungen hier wirken sich auf jedes verbundene Ger\u00e4t aus.",
+        "data": {
           "sensors": "Sensoren",
           "lights": "Lichter",
           "switches": "Schalter",

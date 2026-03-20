@@ -31,13 +31,12 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 #  Config flow — adding a new panel (device info only)
 # ---------------------------------------------------------------------------
 
 class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-  """Handle adding a new panel."""
-
   VERSION = 1
 
   async def async_step_user(self, user_input: Dict[str, Any] | None = None):
@@ -58,13 +57,18 @@ class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
           val = (user_input.get(key) or "").strip()
           if val:
             data[key] = val
-        title = _entry_title(data)
-        return self.async_create_entry(title=title, data=data)
+        return self.async_create_entry(title=_entry_title(data), data=data)
 
     defaults = user_input or {}
     return self.async_show_form(
       step_id="user",
-      data_schema=_build_device_schema(defaults),
+      data_schema=vol.Schema({
+        vol.Required(CONF_BASE_TOPIC, default=defaults.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
+        vol.Required(CONF_HA_PREFIX, default=defaults.get(CONF_HA_PREFIX, DEFAULT_PREFIX)): str,
+        vol.Optional(CONF_DEVICE_NAME, default=defaults.get(CONF_DEVICE_NAME, "")): str,
+        vol.Optional(CONF_MANUFACTURER, default=defaults.get(CONF_MANUFACTURER, "")): str,
+        vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, "")): str,
+      }),
       errors=errors,
     )
 
@@ -73,8 +77,7 @@ class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     if device_id:
       await self.async_set_unique_id(device_id)
       self._abort_if_unique_id_configured()
-    title = _entry_title(import_data)
-    return self.async_create_entry(title=title, data=import_data)
+    return self.async_create_entry(title=_entry_title(import_data), data=import_data)
 
   @staticmethod
   @callback
@@ -85,148 +88,133 @@ class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 # ---------------------------------------------------------------------------
-#  Options flow — device info + shared entity configuration
+#  Options flow — menu with two sections
 # ---------------------------------------------------------------------------
 
 class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
-  """Edit panel settings and shared entity configuration."""
 
   async def async_step_init(self, user_input: Dict[str, Any] | None = None):
-    return await self.async_step_user(user_input)
+    return self.async_show_menu(
+      step_id="init",
+      menu_options=["panel", "entities"],
+    )
 
-  async def async_step_user(self, user_input: Dict[str, Any] | None = None):
+  # ---- Section 1: Panel settings ----
+
+  async def async_step_panel(self, user_input: Dict[str, Any] | None = None):
+    errors: Dict[str, str] = {}
+    current = dict(self.config_entry.data)
+
+    if user_input is not None:
+      base = _normalise_topic(user_input.get(CONF_BASE_TOPIC, current.get(CONF_BASE_TOPIC)), DEFAULT_BASE)
+      prefix = _normalise_topic(user_input.get(CONF_HA_PREFIX, current.get(CONF_HA_PREFIX)), DEFAULT_PREFIX)
+      updated = dict(current)
+      updated[CONF_BASE_TOPIC] = base
+      updated[CONF_HA_PREFIX] = prefix
+      for key in (CONF_DEVICE_NAME, CONF_MANUFACTURER, CONF_MODEL):
+        val = (user_input.get(key) or "").strip()
+        if val:
+          updated[key] = val
+        else:
+          updated.pop(key, None)
+      self.hass.config_entries.async_update_entry(self.config_entry, data=updated)
+      return self.async_create_entry(title="", data={})
+
+    return self.async_show_form(
+      step_id="panel",
+      data_schema=vol.Schema({
+        vol.Required(CONF_BASE_TOPIC, default=current.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
+        vol.Required(CONF_HA_PREFIX, default=current.get(CONF_HA_PREFIX, DEFAULT_PREFIX)): str,
+        vol.Optional(CONF_DEVICE_NAME, default=current.get(CONF_DEVICE_NAME, "")): str,
+        vol.Optional(CONF_MANUFACTURER, default=current.get(CONF_MANUFACTURER, "")): str,
+        vol.Optional(CONF_MODEL, default=current.get(CONF_MODEL, "")): str,
+      }),
+      errors=errors,
+    )
+
+  # ---- Section 2: Shared entity configuration ----
+
+  async def async_step_entities(self, user_input: Dict[str, Any] | None = None):
     errors: Dict[str, str] = {}
     current = dict(self.config_entry.data)
 
     if user_input is not None:
       try:
-        data = _convert_options_data(user_input, current)
+        updated = _convert_entity_data(user_input, current)
       except ValueError as err:
         errors["base"] = err.args[0]
       else:
-        _LOGGER.warning(
-          "Tab5 LVGL speichert: sensors=%s lights=%s switches=%s scene_map=%s",
-          data.get(CONF_SENSORS),
-          data.get(CONF_LIGHTS),
-          data.get(CONF_SWITCHES),
-          data.get(CONF_SCENE_MAP),
-        )
-        self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+        self.hass.config_entries.async_update_entry(self.config_entry, data=updated)
         return self.async_create_entry(title="", data={})
 
-    defaults = _entry_to_form_data(current)
+    merged = _merge_all_entities(self.hass, current)
     return self.async_show_form(
-      step_id="user",
-      data_schema=_build_full_schema(defaults),
+      step_id="entities",
+      data_schema=vol.Schema({
+        vol.Optional(CONF_SENSORS, default=merged.get(CONF_SENSORS, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(multiple=True)
+        ),
+        vol.Optional(CONF_LIGHTS, default=merged.get(CONF_LIGHTS, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=["light"], multiple=True)
+        ),
+        vol.Optional(CONF_SWITCHES, default=merged.get(CONF_SWITCHES, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=["switch"], multiple=True)
+        ),
+        vol.Optional(CONF_SCENE_ENTITIES, default=merged.get(CONF_SCENE_ENTITIES, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=["scene", "script"], multiple=True)
+        ),
+        vol.Optional(CONF_SCENE_MAP_TEXT, default=merged.get(CONF_SCENE_MAP_TEXT, "")): selector.TextSelector(
+          selector.TextSelectorConfig(multiline=True)
+        ),
+      }),
       errors=errors,
     )
-
-
-# ---------------------------------------------------------------------------
-#  Schemas
-# ---------------------------------------------------------------------------
-
-def _build_device_schema(defaults: Dict[str, Any]) -> vol.Schema:
-  """Schema for adding a new panel — device info only."""
-  return vol.Schema(
-    {
-      vol.Required(CONF_BASE_TOPIC, default=defaults.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
-      vol.Required(CONF_HA_PREFIX, default=defaults.get(CONF_HA_PREFIX, DEFAULT_PREFIX)): str,
-      vol.Optional(CONF_DEVICE_NAME, default=defaults.get(CONF_DEVICE_NAME, "")): str,
-      vol.Optional(CONF_MANUFACTURER, default=defaults.get(CONF_MANUFACTURER, "")): str,
-      vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, "")): str,
-    }
-  )
-
-
-def _build_full_schema(defaults: Dict[str, Any]) -> vol.Schema:
-  """Schema for options — device info + shared entity configuration."""
-  return vol.Schema(
-    {
-      vol.Required(CONF_BASE_TOPIC, default=defaults.get(CONF_BASE_TOPIC, DEFAULT_BASE)): str,
-      vol.Required(CONF_HA_PREFIX, default=defaults.get(CONF_HA_PREFIX, DEFAULT_PREFIX)): str,
-      vol.Optional(CONF_DEVICE_NAME, default=defaults.get(CONF_DEVICE_NAME, "")): str,
-      vol.Optional(CONF_MANUFACTURER, default=defaults.get(CONF_MANUFACTURER, "")): str,
-      vol.Optional(CONF_MODEL, default=defaults.get(CONF_MODEL, "")): str,
-      vol.Optional(CONF_SENSORS, default=defaults.get(CONF_SENSORS, [])): selector.EntitySelector(
-        selector.EntitySelectorConfig(multiple=True)
-      ),
-      vol.Optional(CONF_LIGHTS, default=defaults.get(CONF_LIGHTS, [])): selector.EntitySelector(
-        selector.EntitySelectorConfig(domain=["light"], multiple=True)
-      ),
-      vol.Optional(CONF_SWITCHES, default=defaults.get(CONF_SWITCHES, [])): selector.EntitySelector(
-        selector.EntitySelectorConfig(domain=["switch"], multiple=True)
-      ),
-      vol.Optional(CONF_SCENE_ENTITIES, default=defaults.get(CONF_SCENE_ENTITIES, [])): selector.EntitySelector(
-        selector.EntitySelectorConfig(domain=["scene", "script"], multiple=True)
-      ),
-      vol.Optional(CONF_SCENE_MAP_TEXT, default=defaults.get(CONF_SCENE_MAP_TEXT, "")): selector.TextSelector(
-        selector.TextSelectorConfig(multiline=True)
-      ),
-    }
-  )
 
 
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
 
-def _entry_to_form_data(source: Dict[str, Any]) -> Dict[str, Any]:
-  data = dict(source)
-  data.setdefault(CONF_BASE_TOPIC, DEFAULT_BASE)
-  data.setdefault(CONF_HA_PREFIX, DEFAULT_PREFIX)
-  data.setdefault(CONF_DEVICE_NAME, "")
-  data.setdefault(CONF_MANUFACTURER, "")
-  data.setdefault(CONF_MODEL, "")
-  data.setdefault(CONF_SENSORS, [])
-  data.setdefault(CONF_LIGHTS, [])
-  data.setdefault(CONF_SWITCHES, [])
-  data.setdefault(CONF_SCENE_ENTITIES, list((source.get(CONF_SCENE_MAP) or {}).values()))
-  data.setdefault(CONF_SCENE_MAP_TEXT, source.get(CONF_SCENE_MAP_TEXT, ""))
-  return data
+def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
+  """Collect entities from all config entries to show the merged state."""
+  all_sensors = list(current.get(CONF_SENSORS, []))
+  all_lights = list(current.get(CONF_LIGHTS, []))
+  all_switches = list(current.get(CONF_SWITCHES, []))
+  all_scene_ids = list((current.get(CONF_SCENE_MAP) or {}).values())
+  scene_map_text = current.get(CONF_SCENE_MAP_TEXT, "")
+
+  for entry in hass.config_entries.async_entries(DOMAIN):
+    if entry.entry_id == current.get("_entry_id"):
+      continue
+    data = dict(entry.data or {})
+    if entry.options:
+      data.update(entry.options)
+    all_sensors.extend(list(data.get(CONF_SENSORS, [])))
+    all_lights.extend(list(data.get(CONF_LIGHTS, [])))
+    all_switches.extend(list(data.get(CONF_SWITCHES, [])))
+    all_scene_ids.extend(list((data.get(CONF_SCENE_MAP) or {}).values()))
+
+  return {
+    CONF_SENSORS: _unique(all_sensors),
+    CONF_LIGHTS: _unique(all_lights),
+    CONF_SWITCHES: _unique(all_switches),
+    CONF_SCENE_ENTITIES: _unique(all_scene_ids),
+    CONF_SCENE_MAP_TEXT: scene_map_text,
+  }
 
 
-def _convert_options_data(user_input: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
-  _LOGGER.debug("Tab5 options raw form data: %s", user_input)
-
-  base = _normalise_topic(
-    user_input.get(CONF_BASE_TOPIC, current.get(CONF_BASE_TOPIC, DEFAULT_BASE)),
-    DEFAULT_BASE,
-  )
-  prefix = _normalise_topic(
-    user_input.get(CONF_HA_PREFIX, current.get(CONF_HA_PREFIX, DEFAULT_PREFIX)),
-    DEFAULT_PREFIX,
-  )
-
-  raw_sensors = user_input.get(CONF_SENSORS)
-  if raw_sensors is None:
-    raw_sensors = current.get(CONF_SENSORS, [])
-  sensors = _normalise_entity_list(raw_sensors)
-
-  raw_lights = user_input.get(CONF_LIGHTS)
-  if raw_lights is None:
-    raw_lights = current.get(CONF_LIGHTS, [])
-  lights = _normalise_entity_list(raw_lights)
-
-  raw_switches = user_input.get(CONF_SWITCHES)
-  if raw_switches is None:
-    raw_switches = current.get(CONF_SWITCHES, [])
-  switches = _normalise_entity_list(raw_switches)
+def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+  sensors = _normalise_entity_list(user_input.get(CONF_SENSORS, []))
+  lights = _normalise_entity_list(user_input.get(CONF_LIGHTS, []))
+  switches = _normalise_entity_list(user_input.get(CONF_SWITCHES, []))
 
   scene_map = {}
-
-  selected_scenes = user_input.get(CONF_SCENE_ENTITIES)
-  if selected_scenes is None:
-    selected_scenes = list((current.get(CONF_SCENE_MAP) or {}).values())
-  else:
-    selected_scenes = _normalise_entity_list(selected_scenes)
-
+  selected_scenes = _normalise_entity_list(user_input.get(CONF_SCENE_ENTITIES, []))
   for entity_id in selected_scenes:
     entity_id = (entity_id or "").strip()
     if not entity_id:
       continue
-    alias = entity_id.split(".", 1)[-1]
-    alias = alias.replace("scene.", "").lower()
+    alias = entity_id.split(".", 1)[-1].replace("scene.", "").lower()
     base_alias = alias
     idx = 2
     while alias in scene_map:
@@ -234,28 +222,16 @@ def _convert_options_data(user_input: Dict[str, Any], current: Dict[str, Any]) -
       idx += 1
     scene_map[alias] = entity_id
 
-  scene_map_text = user_input.get(CONF_SCENE_MAP_TEXT, current.get(CONF_SCENE_MAP_TEXT, ""))
-  scene_map_text = scene_map_text.strip("\n")
+  scene_map_text = user_input.get(CONF_SCENE_MAP_TEXT, "").strip("\n")
   manual_map = _parse_scene_map(scene_map_text)
   scene_map.update(manual_map)
 
-  device_name = (user_input.get(CONF_DEVICE_NAME) or current.get(CONF_DEVICE_NAME, "")).strip()
-  manufacturer = (user_input.get(CONF_MANUFACTURER) or current.get(CONF_MANUFACTURER, "")).strip()
-  model = (user_input.get(CONF_MODEL) or current.get(CONF_MODEL, "")).strip()
-
   updated = dict(current)
-  updated[CONF_BASE_TOPIC] = base
-  updated[CONF_HA_PREFIX] = prefix
   updated[CONF_SENSORS] = sensors
   updated[CONF_LIGHTS] = lights
   updated[CONF_SWITCHES] = switches
   updated[CONF_SCENE_MAP] = scene_map
   updated[CONF_SCENE_MAP_TEXT] = scene_map_text
-  for key, val in ((CONF_DEVICE_NAME, device_name), (CONF_MANUFACTURER, manufacturer), (CONF_MODEL, model)):
-    if val:
-      updated[key] = val
-    else:
-      updated.pop(key, None)
   return updated
 
 
@@ -289,8 +265,7 @@ def _entry_title(data: Dict[str, Any]) -> str:
     return device_name
   device_id = data.get(CONF_DEVICE_ID)
   if device_id:
-    suffix = device_id[-4:].upper()
-    return f"Tab5 {suffix}"
+    return f"Tab5 {device_id[-4:].upper()}"
   return "LVGL Panel"
 
 
@@ -308,3 +283,13 @@ def _normalise_entity_list(values: Any) -> list[str]:
     if entity_id:
       entities.append(entity_id)
   return entities
+
+
+def _unique(items: list) -> list:
+  seen = set()
+  result = []
+  for item in items:
+    if item not in seen:
+      seen.add(item)
+      result.append(item)
+  return result
