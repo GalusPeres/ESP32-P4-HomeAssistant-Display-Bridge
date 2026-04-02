@@ -501,7 +501,7 @@ class Tab5Bridge:
       _LOGGER.warning("Tab5 history request ignored (missing entity_id)")
       return
 
-    hours = _coerce_int(parsed.get("hours"), 24, 1, 72)
+    hours = _coerce_int(parsed.get("hours"), 24, 1, 168)
     period_minutes = _coerce_int(parsed.get("period_minutes"), 5, 1, 60)
     points = _coerce_int(parsed.get("points"), int(hours * 60 / period_minutes), 1, 720)
     stat = str(parsed.get("stat") or "mean").strip().lower() or "mean"
