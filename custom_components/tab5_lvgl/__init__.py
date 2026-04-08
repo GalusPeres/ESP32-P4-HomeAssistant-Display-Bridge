@@ -1245,21 +1245,19 @@ def _compact_hourly_forecast(hourly_forecast: List[Dict[str, Any]]) -> List[Dict
     if not isinstance(entry, dict):
       continue
     out: Dict[str, Any] = {}
-    for key in (
-      "datetime",
-      "condition",
-      "icon",
-      "temperature",
-      "precipitation",
-      "precipitation_probability",
-    ):
-      value = entry.get(key)
-      if value is not None:
-        out[key] = value
     local_dt = _forecast_entry_local_datetime(entry)
     if local_dt is not None:
-      out["date_local"] = local_dt.date().isoformat()
-      out["hour_local"] = int(local_dt.hour)
+      out["d"] = local_dt.date().isoformat()
+      out["h"] = int(local_dt.hour)
+    temperature = entry.get("temperature")
+    if temperature is not None:
+      out["t"] = temperature
+    precipitation = entry.get("precipitation")
+    if precipitation is not None:
+      out["p"] = precipitation
+    precipitation_probability = entry.get("precipitation_probability")
+    if precipitation_probability is not None:
+      out["pp"] = precipitation_probability
     if out:
       compact.append(out)
   return compact
