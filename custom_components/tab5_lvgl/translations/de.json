@@ -40,6 +40,7 @@
         "description": "Gilt f\u00fcr alle Panels. \u00c4nderungen hier wirken sich auf jedes verbundene Ger\u00e4t aus.",
         "data": {
           "sensors": "Sensoren",
+          "weathers": "Wetter",
           "lights": "Lichter",
           "switches": "Schalter",
           "scene_entities": "Szenen / Scripts",

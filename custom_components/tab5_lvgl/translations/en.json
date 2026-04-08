@@ -40,6 +40,7 @@
         "description": "Applies to all panels. Changes here affect every connected device.",
         "data": {
           "sensors": "Sensors",
+          "weathers": "Weather",
           "lights": "Lights",
           "switches": "Switches",
           "scene_entities": "Scenes / Scripts",

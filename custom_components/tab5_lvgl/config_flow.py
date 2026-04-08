@@ -24,6 +24,7 @@ from .const import (
   CONF_SCENE_MAP_TEXT,
   CONF_SENSORS,
   CONF_SWITCHES,
+  CONF_WEATHERS,
   DEFAULT_BASE,
   DEFAULT_PREFIX,
   DOMAIN,
@@ -154,6 +155,9 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         vol.Optional(CONF_SENSORS, default=merged.get(CONF_SENSORS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(multiple=True)
         ),
+        vol.Optional(CONF_WEATHERS, default=merged.get(CONF_WEATHERS, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=["weather"], multiple=True)
+        ),
         vol.Optional(CONF_LIGHTS, default=merged.get(CONF_LIGHTS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(domain=["light"], multiple=True)
         ),
@@ -177,7 +181,11 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
 
 def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
   """Collect entities from all config entries to show the merged state."""
-  all_sensors = list(current.get(CONF_SENSORS, []))
+  current_weather_from_sensors, current_sensors = _split_weather_entities(
+    list(current.get(CONF_SENSORS, []))
+  )
+  all_sensors = list(current_sensors)
+  all_weathers = _unique(list(current.get(CONF_WEATHERS, [])) + current_weather_from_sensors)
   all_lights = list(current.get(CONF_LIGHTS, []))
   all_switches = list(current.get(CONF_SWITCHES, []))
   all_scene_ids = list((current.get(CONF_SCENE_MAP) or {}).values())
@@ -189,13 +197,17 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
     data = dict(entry.data or {})
     if entry.options:
       data.update(entry.options)
-    all_sensors.extend(list(data.get(CONF_SENSORS, [])))
+    entry_weather_from_sensors, entry_sensors = _split_weather_entities(list(data.get(CONF_SENSORS, [])))
+    all_sensors.extend(entry_sensors)
+    all_weathers.extend(list(data.get(CONF_WEATHERS, [])))
+    all_weathers.extend(entry_weather_from_sensors)
     all_lights.extend(list(data.get(CONF_LIGHTS, [])))
     all_switches.extend(list(data.get(CONF_SWITCHES, [])))
     all_scene_ids.extend(list((data.get(CONF_SCENE_MAP) or {}).values()))
 
   return {
     CONF_SENSORS: _unique(all_sensors),
+    CONF_WEATHERS: _unique(all_weathers),
     CONF_LIGHTS: _unique(all_lights),
     CONF_SWITCHES: _unique(all_switches),
     CONF_SCENE_ENTITIES: _unique(all_scene_ids),
@@ -204,7 +216,10 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
-  sensors = _normalise_entity_list(user_input.get(CONF_SENSORS, []))
+  weather_from_sensors, sensors = _split_weather_entities(_normalise_entity_list(user_input.get(CONF_SENSORS, [])))
+  weathers = _unique(
+    _normalise_entity_list(user_input.get(CONF_WEATHERS, [])) + weather_from_sensors
+  )
   lights = _normalise_entity_list(user_input.get(CONF_LIGHTS, []))
   switches = _normalise_entity_list(user_input.get(CONF_SWITCHES, []))
 
@@ -228,11 +243,26 @@ def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) ->
 
   updated = dict(current)
   updated[CONF_SENSORS] = sensors
+  updated[CONF_WEATHERS] = weathers
   updated[CONF_LIGHTS] = lights
   updated[CONF_SWITCHES] = switches
   updated[CONF_SCENE_MAP] = scene_map
   updated[CONF_SCENE_MAP_TEXT] = scene_map_text
   return updated
+
+
+def _split_weather_entities(entities: list[str]) -> tuple[list[str], list[str]]:
+  weathers: list[str] = []
+  sensors: list[str] = []
+  for entity_id in entities:
+    cleaned = (entity_id or "").strip()
+    if not cleaned:
+      continue
+    if cleaned.startswith("weather."):
+      weathers.append(cleaned)
+    else:
+      sensors.append(cleaned)
+  return _unique(weathers), _unique(sensors)
 
 
 def _parse_scene_map(text: str) -> Dict[str, str]:

@@ -86,8 +86,10 @@ LIGHT_SERVICE_FIELDS = {
 
 SERVICE_SCHEMA = vol.Schema({vol.Optional("entry_id"): cv.string})
 
-FORECAST_TYPE = "daily"
-FORECAST_LIMIT = 8
+FORECAST_DAILY_TYPE = "daily"
+FORECAST_HOURLY_TYPE = "hourly"
+FORECAST_DAILY_LIMIT = 8
+FORECAST_HOURLY_PAYLOAD_LIMIT = 48
 FORECAST_CACHE_TTL = timedelta(minutes=10)
 
 
@@ -242,9 +244,8 @@ class Tab5Bridge:
     self.ha_prefix = _normalise_topic(data.get(CONF_HA_PREFIX, DEFAULT_PREFIX), DEFAULT_PREFIX)
     raw_sensors = _unique_entities(list(data.get(CONF_SENSORS, [])))
     raw_weathers = _unique_entities(list(data.get(CONF_WEATHERS, [])))
-    if raw_weathers:
-      raw_sensors = _unique_entities(raw_sensors + raw_weathers)
-    self.weathers, configured_sensors = _split_weather_entities(raw_sensors)
+    legacy_weathers, configured_sensors = _split_weather_entities(raw_sensors)
+    self.weathers = _unique_entities(legacy_weathers + raw_weathers)
     self._configured_sensors: List[str] = configured_sensors
     self.sensors: List[str] = []
     self.lights: List[str] = _unique_entities(list(data.get(CONF_LIGHTS, [])))
@@ -272,7 +273,7 @@ class Tab5Bridge:
     self._config_refresh_pending = 0
     self._icon_cache: Dict[str, str] = {}
     self._icon_refresh_handle = None
-    self._forecast_cache: Dict[str, Tuple[datetime, List[Dict[str, Any]]]] = {}
+    self._forecast_cache: Dict[Tuple[str, str], Tuple[datetime, List[Dict[str, Any]]]] = {}
     self._refresh_runtime_entity_lists()
 
   def _resolve_internal_sensor_entities(self) -> List[str]:
@@ -301,11 +302,10 @@ class Tab5Bridge:
       data = dict(entry.data or {})
       if entry.options:
         data.update(entry.options)
-      raw_sensors = list(data.get(CONF_SENSORS, []))
-      raw_weathers = list(data.get(CONF_WEATHERS, []))
-      weathers, sensors = _split_weather_entities(
-        _unique_entities(raw_sensors + raw_weathers) if raw_weathers else raw_sensors
-      )
+      raw_sensors = _unique_entities(list(data.get(CONF_SENSORS, [])))
+      raw_weathers = _unique_entities(list(data.get(CONF_WEATHERS, [])))
+      legacy_weathers, sensors = _split_weather_entities(raw_sensors)
+      weathers = _unique_entities(legacy_weathers + raw_weathers)
       all_sensors.extend(sensors)
       all_lights.extend(list(data.get(CONF_LIGHTS, [])))
       all_switches.extend(list(data.get(CONF_SWITCHES, [])))
@@ -848,23 +848,32 @@ class Tab5Bridge:
 
     self._icon_refresh_handle = async_call_later(self.hass, delay, _refresh)
 
-  async def _get_weather_forecast(self, entity_id: str) -> Optional[List[Dict[str, Any]]]:
+  async def _get_weather_forecast(
+    self,
+    entity_id: str,
+    forecast_type: str,
+  ) -> Optional[List[Dict[str, Any]]]:
     now = dt_util.utcnow()
-    cached = self._forecast_cache.get(entity_id)
+    cache_key = (entity_id, forecast_type)
+    cached = self._forecast_cache.get(cache_key)
     if cached and (now - cached[0]) < FORECAST_CACHE_TTL:
       return cached[1]
 
-    forecast = await self._fetch_weather_forecast(entity_id)
+    forecast = await self._fetch_weather_forecast(entity_id, forecast_type)
     if forecast:
-      self._forecast_cache[entity_id] = (now, forecast)
+      self._forecast_cache[cache_key] = (now, forecast)
     return forecast
 
-  async def _fetch_weather_forecast(self, entity_id: str) -> Optional[List[Dict[str, Any]]]:
+  async def _fetch_weather_forecast(
+    self,
+    entity_id: str,
+    forecast_type: str,
+  ) -> Optional[List[Dict[str, Any]]]:
     forecast: Optional[List[Dict[str, Any]]] = None
 
     if async_get_forecasts:
       try:
-        result = await async_get_forecasts(self.hass, entity_id, FORECAST_TYPE)
+        result = await async_get_forecasts(self.hass, entity_id, forecast_type)
       except TypeError:
         try:
           result = await async_get_forecasts(self.hass, entity_id)
@@ -883,7 +892,7 @@ class Tab5Bridge:
         response = await self.hass.services.async_call(
           "weather",
           "get_forecasts",
-          {"entity_id": entity_id, "type": FORECAST_TYPE},
+          {"entity_id": entity_id, "type": forecast_type},
           blocking=True,
           return_response=True,
         )
@@ -892,7 +901,7 @@ class Tab5Bridge:
           await self.hass.services.async_call(
             "weather",
             "get_forecasts",
-            {"entity_id": entity_id, "type": FORECAST_TYPE},
+            {"entity_id": entity_id, "type": forecast_type},
             blocking=True,
           )
         except Exception as err:
@@ -909,8 +918,8 @@ class Tab5Bridge:
     if not forecast:
       return None
     _apply_forecast_icons(forecast)
-    if len(forecast) > FORECAST_LIMIT:
-      forecast = forecast[:FORECAST_LIMIT]
+    if forecast_type == FORECAST_DAILY_TYPE and len(forecast) > FORECAST_DAILY_LIMIT:
+      forecast = forecast[:FORECAST_DAILY_LIMIT]
     return forecast
 
   def _prime_icon_cache(self) -> None:
@@ -962,11 +971,26 @@ class Tab5Bridge:
 
   async def _build_weather_payload(self, entity_id: str, state: State) -> str:
     payload = _extract_weather_payload(state, self.hass)
-    forecast = payload.get("forecast")
-    if not forecast:
-      cached = await self._get_weather_forecast(entity_id)
-      if cached:
-        payload["forecast"] = cached
+    daily_forecast = payload.get("forecast")
+    if not isinstance(daily_forecast, list) or not daily_forecast:
+      daily_forecast = await self._get_weather_forecast(entity_id, FORECAST_DAILY_TYPE)
+
+    hourly_forecast = await self._get_weather_forecast(entity_id, FORECAST_HOURLY_TYPE)
+
+    if isinstance(daily_forecast, list) and daily_forecast:
+      prepared_daily = [dict(entry) for entry in daily_forecast if isinstance(entry, dict)]
+      _apply_forecast_icons(prepared_daily)
+      if hourly_forecast:
+        prepared_daily = _merge_hourly_precip_into_daily(prepared_daily, hourly_forecast)
+      if len(prepared_daily) > FORECAST_DAILY_LIMIT:
+        prepared_daily = prepared_daily[:FORECAST_DAILY_LIMIT]
+      payload["forecast"] = prepared_daily
+
+    if hourly_forecast:
+      prepared_hourly = _compact_hourly_forecast(hourly_forecast)
+      if prepared_hourly:
+        payload["forecast_hourly"] = prepared_hourly
+
     return json.dumps(payload)
 
   def _ha_topic_for_entity(self, entity_id: str, suffix: str) -> str:
@@ -1057,6 +1081,122 @@ def _split_weather_entities(entities: List[str]) -> Tuple[List[str], List[str]]:
     else:
       sensors.append(entity_id)
   return _unique_entities(weathers), _unique_entities(sensors)
+
+
+def _weather_number(value: Any) -> Optional[float]:
+  if isinstance(value, bool):
+    return None
+  if isinstance(value, (int, float)):
+    return float(value)
+  if isinstance(value, str):
+    text = value.strip().replace(",", ".")
+    if not text:
+      return None
+    try:
+      return float(text)
+    except ValueError:
+      return None
+  return None
+
+
+def _forecast_entry_local_date(entry: Dict[str, Any]) -> Optional[date]:
+  raw = entry.get("datetime") or entry.get("date")
+  if isinstance(raw, datetime):
+    try:
+      return dt_util.as_local(raw).date()
+    except Exception:
+      return raw.date()
+  if isinstance(raw, date):
+    return raw
+  if not isinstance(raw, str):
+    return None
+
+  parsed = dt_util.parse_datetime(raw)
+  if parsed is not None:
+    try:
+      return dt_util.as_local(parsed).date()
+    except Exception:
+      return parsed.date()
+
+  try:
+    return date.fromisoformat(raw[:10])
+  except ValueError:
+    return None
+
+
+def _merge_hourly_precip_into_daily(
+  daily_forecast: List[Dict[str, Any]],
+  hourly_forecast: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+  hourly_by_day: Dict[date, Dict[str, Any]] = {}
+
+  for entry in hourly_forecast:
+    if not isinstance(entry, dict):
+      continue
+    forecast_day = _forecast_entry_local_date(entry)
+    if forecast_day is None:
+      continue
+
+    bucket = hourly_by_day.setdefault(
+      forecast_day,
+      {
+        "precipitation_total": 0.0,
+        "has_precipitation": False,
+        "precipitation_probability_max": 0.0,
+        "has_probability": False,
+      },
+    )
+
+    precipitation = _weather_number(entry.get("precipitation"))
+    if precipitation is not None:
+      bucket["precipitation_total"] += precipitation
+      bucket["has_precipitation"] = True
+
+    precipitation_probability = _weather_number(entry.get("precipitation_probability"))
+    if precipitation_probability is not None:
+      bucket["precipitation_probability_max"] = max(
+        bucket["precipitation_probability_max"],
+        precipitation_probability,
+      )
+      bucket["has_probability"] = True
+
+  merged: List[Dict[str, Any]] = []
+  for entry in daily_forecast:
+    if not isinstance(entry, dict):
+      continue
+    out = dict(entry)
+    forecast_day = _forecast_entry_local_date(out)
+    bucket = hourly_by_day.get(forecast_day) if forecast_day is not None else None
+    if bucket:
+      if bucket["has_precipitation"]:
+        out["precipitation"] = round(bucket["precipitation_total"], 1)
+      if bucket["has_probability"]:
+        out["precipitation_probability"] = int(round(bucket["precipitation_probability_max"]))
+    merged.append(out)
+
+  return merged
+
+
+def _compact_hourly_forecast(hourly_forecast: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+  compact: List[Dict[str, Any]] = []
+  for entry in hourly_forecast[:FORECAST_HOURLY_PAYLOAD_LIMIT]:
+    if not isinstance(entry, dict):
+      continue
+    out: Dict[str, Any] = {}
+    for key in (
+      "datetime",
+      "condition",
+      "icon",
+      "temperature",
+      "precipitation",
+      "precipitation_probability",
+    ):
+      value = entry.get(key)
+      if value is not None:
+        out[key] = value
+    if out:
+      compact.append(out)
+  return compact
 
 
 def _try_parse_json(payload: str) -> Any:
@@ -1459,8 +1599,8 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
   if not isinstance(weathers_raw, list):
     raise ValueError("invalid_weathers")
   weathers = [str(item).strip() for item in weathers_raw if str(item).strip()]
-  if weathers:
-    sensors = _unique_entities(sensors + weathers)
+  legacy_weathers, sensors = _split_weather_entities(sensors)
+  weathers = _unique_entities(weathers + legacy_weathers)
 
   lights_raw = payload.get("lights") or []
   if not isinstance(lights_raw, list):
@@ -1490,6 +1630,7 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     CONF_BASE_TOPIC: base,
     CONF_HA_PREFIX: prefix,
     CONF_SENSORS: sensors,
+    CONF_WEATHERS: weathers,
     CONF_LIGHTS: lights,
     CONF_SWITCHES: switches,
     CONF_SCENE_MAP: scene_map,
