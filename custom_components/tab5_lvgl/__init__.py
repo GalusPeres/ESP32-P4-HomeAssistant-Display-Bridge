@@ -59,6 +59,7 @@ from .const import (
   HISTORY_REQUEST_SUFFIX,
   HISTORY_RESPONSE_SUFFIX,
   SERVICE_PUBLISH_SNAPSHOT,
+  WEATHER_REQUEST_SUFFIX,
 )
 from .device_helpers import entry_device_id, entry_device_info, entry_device_name
 
@@ -89,7 +90,7 @@ SERVICE_SCHEMA = vol.Schema({vol.Optional("entry_id"): cv.string})
 FORECAST_DAILY_TYPE = "daily"
 FORECAST_HOURLY_TYPE = "hourly"
 FORECAST_DAILY_LIMIT = 8
-FORECAST_HOURLY_PAYLOAD_LIMIT = 48
+FORECAST_HOURLY_PAYLOAD_LIMIT = 168
 FORECAST_CACHE_TTL = timedelta(minutes=10)
 
 
@@ -262,6 +263,9 @@ class Tab5Bridge:
     self.history_response_topic = (
       f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{HISTORY_RESPONSE_SUFFIX}" if self.device_id else None
     )
+    self.weather_request_topic = (
+      f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{WEATHER_REQUEST_SUFFIX}" if self.device_id else None
+    )
     self._unsub_state = None
     self._unsub_connected = None
     self._unsub_scene = None
@@ -269,6 +273,7 @@ class Tab5Bridge:
     self._unsub_switch = None
     self._unsub_request = None
     self._unsub_history = None
+    self._unsub_weather = None
     self._config_refresh_handles: List = []
     self._config_refresh_pending = 0
     self._icon_cache: Dict[str, str] = {}
@@ -392,6 +397,13 @@ class Tab5Bridge:
         self._async_handle_history_request,
       )
       _LOGGER.debug("Tab5 subscribed to history topic %s", self.history_request_topic)
+    if self.weather_request_topic:
+      self._unsub_weather = await mqtt.async_subscribe(
+        self.hass,
+        self.weather_request_topic,
+        self._async_handle_weather_request,
+      )
+      _LOGGER.debug("Tab5 subscribed to weather topic %s", self.weather_request_topic)
     self._schedule_config_refresh()
 
   async def async_unload(self) -> None:
@@ -417,6 +429,9 @@ class Tab5Bridge:
     if self._unsub_history:
       self._unsub_history()
       self._unsub_history = None
+    if self._unsub_weather:
+      self._unsub_weather()
+      self._unsub_weather = None
     if self._config_refresh_handles:
       for unsub in self._config_refresh_handles:
         unsub()
@@ -638,6 +653,30 @@ class Tab5Bridge:
       qos=0,
       retain=False,
     )
+
+  async def _async_handle_weather_request(self, msg: ReceiveMessage) -> None:
+    """Handle explicit weather refresh requests from the Tab5 popup."""
+    parsed = _try_parse_json(msg.payload)
+    entity_id = ""
+    if isinstance(parsed, dict):
+      entity_id = str(parsed.get("entity_id") or "").strip()
+
+    if entity_id:
+      if not _is_weather_entity(entity_id):
+        _LOGGER.debug("Tab5 weather request ignored for non-weather entity %s", entity_id)
+        return
+      state = self.hass.states.get(entity_id)
+      if not state:
+        _LOGGER.debug("Tab5 weather request ignored for missing entity %s", entity_id)
+        return
+      await self._async_publish_weather_state(entity_id, state, retain=True)
+      return
+
+    for weather_entity in self.weathers:
+      state = self.hass.states.get(weather_entity)
+      if not state:
+        continue
+      await self._async_publish_weather_state(weather_entity, state, retain=True)
 
   async def _async_handle_scene_command(self, msg: ReceiveMessage) -> None:
     """Execute scene/script commands originating from the Tab5."""
@@ -980,6 +1019,10 @@ class Tab5Bridge:
     if isinstance(daily_forecast, list) and daily_forecast:
       prepared_daily = [dict(entry) for entry in daily_forecast if isinstance(entry, dict)]
       _apply_forecast_icons(prepared_daily)
+      for entry in prepared_daily:
+        local_day = _forecast_entry_local_date(entry)
+        if local_day is not None:
+          entry["date_local"] = local_day.isoformat()
       if hourly_forecast:
         prepared_daily = _merge_hourly_precip_into_daily(prepared_daily, hourly_forecast)
       if len(prepared_daily) > FORECAST_DAILY_LIMIT:
@@ -1124,6 +1167,25 @@ def _forecast_entry_local_date(entry: Dict[str, Any]) -> Optional[date]:
     return None
 
 
+def _forecast_entry_local_datetime(entry: Dict[str, Any]) -> Optional[datetime]:
+  raw = entry.get("datetime")
+  if isinstance(raw, datetime):
+    try:
+      return dt_util.as_local(raw)
+    except Exception:
+      return raw
+  if not isinstance(raw, str):
+    return None
+
+  parsed = dt_util.parse_datetime(raw)
+  if parsed is None:
+    return None
+  try:
+    return dt_util.as_local(parsed)
+  except Exception:
+    return parsed
+
+
 def _merge_hourly_precip_into_daily(
   daily_forecast: List[Dict[str, Any]],
   hourly_forecast: List[Dict[str, Any]],
@@ -1194,6 +1256,10 @@ def _compact_hourly_forecast(hourly_forecast: List[Dict[str, Any]]) -> List[Dict
       value = entry.get(key)
       if value is not None:
         out[key] = value
+    local_dt = _forecast_entry_local_datetime(entry)
+    if local_dt is not None:
+      out["date_local"] = local_dt.date().isoformat()
+      out["hour_local"] = int(local_dt.hour)
     if out:
       compact.append(out)
   return compact
