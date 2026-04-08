@@ -74,6 +74,79 @@ Payload formats:
 
 ## Changelog
 
+### 0.4.3 (2026-04-08)
+- Rebuild daily weather forecast entries from hourly data when providers return too few daily rows
+- Compact daily forecast payloads to keep weather updates smaller and more robust
+- Include compact hourly icon/condition markers for `0/6/12/18 Uhr`
+- Backfill older changelog entries in the README
+
+### 0.4.2 (2026-04-08)
+- Compact hourly weather payload to stay within MQTT message limits
+- Restore weather popup updates after extending hourly forecast support
+
+### 0.4.1 (2026-04-08)
+- Add dedicated weather request flow so popups can fetch fresh weather data on open
+- Extend hourly forecast payload support for detailed daily weather views
+
+### 0.4.0 (2026-04-08)
+- Add weather entities as their own category in the bridge configuration
+- Publish daily and hourly weather forecast data for the display
+- Merge hourly precipitation totals and probability maxima into daily forecast payloads
+
+### 0.3.9 (2026-04-08)
+- Add 7-day sensor history request support
+
+### 0.3.8 (2026-03-27)
+- Remove hardcoded Tab5 and M5Stack defaults for more generic device support
+
+### 0.3.7 (2026-03-23)
+- Add options menu separation for panel and entity configuration
+
+### 0.3.6 (2026-03-22)
+- Rename the integration to LVGL MQTT Bridge
+
+### 0.3.5 (2026-03-20)
+- Split the config flow into a device panel step and a separate entity/options step
+
+### 0.3.4 (2026-03-20)
+- Merge entities from all discovered hubs so one configuration can be shared everywhere
+
+### 0.3.3 (2026-03-20)
+- Always subscribe to light and switch commands
+- Accept any valid entity instead of overly strict filtering
+
+### 0.3.2 (2026-03-20)
+- Use a generic config flow title
+- Add `strings.json` for proper Home Assistant translations
+
+### 0.3.1 (2026-03-20)
+- Add manufacturer and model fields to the config flow form
+
+### 0.3.0 (2026-03-20)
+- Added multi-device support with dynamic device metadata
+
+### 0.2.45 (2026-02-10)
+- Simplify internal sensor labels
+
+### 0.2.44 (2026-02-10)
+- Auto-include all internal Tab5 sensor entities
+
+### 0.2.43 (2026-02-10)
+- Unify internal sensor naming
+- Migrate the battery entity ID
+
+### 0.2.42 (2026-02-10)
+- Fix sensor popup history bucket handling
+
+### 0.2.41 (2026-02-10)
+- Auto-include integration battery and external sensor entities in the Tab5 sensor list
+
+### 0.2.40 (2026-02-10)
+- Version bump for HACS update detection
+
+### 0.2.39 (2026-02-10)
+- Add an external temperature sensor entity
+
 ### 0.2.38 (2026-02-10)
 - Release with plain SemVer tag to maximize HACS version detection compatibility
 

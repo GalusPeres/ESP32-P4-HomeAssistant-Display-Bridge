@@ -1016,6 +1016,7 @@ class Tab5Bridge:
 
     hourly_forecast = await self._get_weather_forecast(entity_id, FORECAST_HOURLY_TYPE)
 
+    prepared_daily: List[Dict[str, Any]] = []
     if isinstance(daily_forecast, list) and daily_forecast:
       prepared_daily = [dict(entry) for entry in daily_forecast if isinstance(entry, dict)]
       _apply_forecast_icons(prepared_daily)
@@ -1025,9 +1026,25 @@ class Tab5Bridge:
           entry["date_local"] = local_day.isoformat()
       if hourly_forecast:
         prepared_daily = _merge_hourly_precip_into_daily(prepared_daily, hourly_forecast)
-      if len(prepared_daily) > FORECAST_DAILY_LIMIT:
-        prepared_daily = prepared_daily[:FORECAST_DAILY_LIMIT]
-      payload["forecast"] = prepared_daily
+
+    if hourly_forecast:
+      built_daily = _build_daily_forecast_from_hourly(hourly_forecast)
+      if prepared_daily:
+        by_day: Dict[str, Dict[str, Any]] = {}
+        for entry in built_daily:
+          local_day = entry.get("date_local")
+          if isinstance(local_day, str) and local_day:
+            by_day[local_day] = entry
+        for entry in prepared_daily:
+          local_day = entry.get("date_local")
+          if isinstance(local_day, str) and local_day:
+            by_day[local_day] = entry
+        prepared_daily = [by_day[key] for key in sorted(by_day.keys())]
+      else:
+        prepared_daily = built_daily
+
+    if prepared_daily:
+      payload["forecast"] = _compact_daily_forecast(prepared_daily)
 
     if hourly_forecast:
       prepared_hourly = _compact_hourly_forecast(hourly_forecast)
@@ -1239,6 +1256,118 @@ def _merge_hourly_precip_into_daily(
   return merged
 
 
+def _build_daily_forecast_from_hourly(hourly_forecast: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+  buckets: Dict[date, Dict[str, Any]] = {}
+
+  for entry in hourly_forecast:
+    if not isinstance(entry, dict):
+      continue
+    forecast_day = _forecast_entry_local_date(entry)
+    if forecast_day is None:
+      continue
+
+    bucket = buckets.setdefault(
+      forecast_day,
+      {
+        "high": None,
+        "low": None,
+        "precipitation_total": 0.0,
+        "has_precipitation": False,
+        "precipitation_probability_max": 0.0,
+        "has_probability": False,
+        "midday_distance": 99,
+        "condition": None,
+        "icon": None,
+        "datetime": None,
+      },
+    )
+
+    temperature = _weather_number(entry.get("temperature"))
+    if temperature is not None:
+      bucket["high"] = temperature if bucket["high"] is None else max(bucket["high"], temperature)
+      bucket["low"] = temperature if bucket["low"] is None else min(bucket["low"], temperature)
+
+    precipitation = _weather_number(entry.get("precipitation"))
+    if precipitation is not None:
+      bucket["precipitation_total"] += precipitation
+      bucket["has_precipitation"] = True
+
+    precipitation_probability = _weather_number(entry.get("precipitation_probability"))
+    if precipitation_probability is not None:
+      bucket["precipitation_probability_max"] = max(
+        bucket["precipitation_probability_max"],
+        precipitation_probability,
+      )
+      bucket["has_probability"] = True
+
+    local_dt = _forecast_entry_local_datetime(entry)
+    hour = local_dt.hour if local_dt is not None else None
+    distance = abs(hour - 12) if hour is not None else 99
+    if distance <= bucket["midday_distance"]:
+      bucket["midday_distance"] = distance
+      bucket["condition"] = entry.get("condition")
+      bucket["icon"] = entry.get("icon")
+      bucket["datetime"] = local_dt.isoformat() if local_dt is not None else entry.get("datetime")
+
+  built: List[Dict[str, Any]] = []
+  for forecast_day in sorted(buckets.keys()):
+    bucket = buckets[forecast_day]
+    out: Dict[str, Any] = {
+      "date_local": forecast_day.isoformat(),
+      "datetime": bucket["datetime"] or forecast_day.isoformat(),
+    }
+    if bucket["condition"] is not None:
+      out["condition"] = bucket["condition"]
+    if bucket["icon"] is not None:
+      out["icon"] = bucket["icon"]
+    if bucket["high"] is not None:
+      out["temperature"] = round(bucket["high"], 1)
+    if bucket["low"] is not None:
+      out["templow"] = round(bucket["low"], 1)
+    if bucket["has_precipitation"]:
+      out["precipitation"] = round(bucket["precipitation_total"], 1)
+    if bucket["has_probability"]:
+      out["precipitation_probability"] = int(round(bucket["precipitation_probability_max"]))
+    built.append(out)
+
+  return built
+
+
+def _compact_daily_forecast(daily_forecast: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+  compact: List[Dict[str, Any]] = []
+  for entry in daily_forecast[:FORECAST_DAILY_LIMIT]:
+    if not isinstance(entry, dict):
+      continue
+
+    out: Dict[str, Any] = {}
+    local_day = _forecast_entry_local_date(entry)
+    if local_day is not None:
+      out["date_local"] = local_day.isoformat()
+      out["datetime"] = entry.get("datetime") or local_day.isoformat()
+    elif isinstance(entry.get("date_local"), str):
+      out["date_local"] = entry["date_local"]
+      if entry.get("datetime") is not None:
+        out["datetime"] = entry.get("datetime")
+    elif entry.get("datetime") is not None:
+      out["datetime"] = entry.get("datetime")
+
+    for key in ("condition", "icon", "temperature", "precipitation", "precipitation_probability"):
+      value = entry.get(key)
+      if value is not None:
+        out[key] = value
+
+    for low_key in ("templow", "temperature_low", "temp_low", "low"):
+      value = entry.get(low_key)
+      if value is not None:
+        out["templow"] = value
+        break
+
+    if out:
+      compact.append(out)
+
+  return compact
+
+
 def _compact_hourly_forecast(hourly_forecast: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
   compact: List[Dict[str, Any]] = []
   for entry in hourly_forecast[:FORECAST_HOURLY_PAYLOAD_LIMIT]:
@@ -1249,6 +1378,14 @@ def _compact_hourly_forecast(hourly_forecast: List[Dict[str, Any]]) -> List[Dict
     if local_dt is not None:
       out["d"] = local_dt.date().isoformat()
       out["h"] = int(local_dt.hour)
+      if local_dt.hour in (0, 6, 12, 18):
+        condition = entry.get("condition")
+        if isinstance(condition, str) and condition.strip():
+          out["c"] = condition.strip()
+        else:
+          icon = entry.get("icon")
+          if isinstance(icon, str) and icon.strip():
+            out["i"] = icon.strip()
     temperature = entry.get("temperature")
     if temperature is not None:
       out["t"] = temperature
