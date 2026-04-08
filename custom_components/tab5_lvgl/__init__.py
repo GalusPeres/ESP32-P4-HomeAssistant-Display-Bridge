@@ -1378,7 +1378,7 @@ def _compact_hourly_forecast(hourly_forecast: List[Dict[str, Any]]) -> List[Dict
     if local_dt is not None:
       out["d"] = local_dt.date().isoformat()
       out["h"] = int(local_dt.hour)
-      if local_dt.hour in (0, 6, 12, 18):
+      if local_dt.hour in (0, 3, 6, 9, 12, 15, 18, 21):
         condition = entry.get("condition")
         if isinstance(condition, str) and condition.strip():
           out["c"] = condition.strip()
