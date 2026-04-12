@@ -149,15 +149,26 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         errors["base"] = err.args[0]
       else:
         self.hass.config_entries.async_update_entry(self.config_entry, data=updated)
+        # Sync energy checkboxes to all other entries
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+          if entry.entry_id == self.config_entry.entry_id:
+            continue
+          other = dict(entry.data or {})
+          other[CONF_ENERGY_ELECTRICITY] = updated[CONF_ENERGY_ELECTRICITY]
+          other[CONF_ENERGY_GAS] = updated[CONF_ENERGY_GAS]
+          other[CONF_ENERGY_WATER] = updated[CONF_ENERGY_WATER]
+          self.hass.config_entries.async_update_entry(entry, data=other)
         return self.async_create_entry(title="", data={})
 
     merged = _merge_all_entities(self.hass, current)
+    # Use energy checkbox from any entry (they are synced)
+    energy_defaults = _merge_energy_checkboxes(self.hass, current)
     return self.async_show_form(
       step_id="entities",
       data_schema=vol.Schema({
-        vol.Optional(CONF_ENERGY_ELECTRICITY, default=current.get(CONF_ENERGY_ELECTRICITY, False)): bool,
-        vol.Optional(CONF_ENERGY_GAS, default=current.get(CONF_ENERGY_GAS, False)): bool,
-        vol.Optional(CONF_ENERGY_WATER, default=current.get(CONF_ENERGY_WATER, False)): bool,
+        vol.Optional(CONF_ENERGY_ELECTRICITY, default=energy_defaults.get(CONF_ENERGY_ELECTRICITY, False)): bool,
+        vol.Optional(CONF_ENERGY_GAS, default=energy_defaults.get(CONF_ENERGY_GAS, False)): bool,
+        vol.Optional(CONF_ENERGY_WATER, default=energy_defaults.get(CONF_ENERGY_WATER, False)): bool,
         vol.Optional(CONF_SENSORS, default=merged.get(CONF_SENSORS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(multiple=True)
         ),
@@ -184,6 +195,21 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
+
+def _merge_energy_checkboxes(hass, current: Dict[str, Any]) -> Dict[str, Any]:
+  """Merge energy checkboxes from all entries using OR logic."""
+  result = {
+    CONF_ENERGY_ELECTRICITY: bool(current.get(CONF_ENERGY_ELECTRICITY, False)),
+    CONF_ENERGY_GAS: bool(current.get(CONF_ENERGY_GAS, False)),
+    CONF_ENERGY_WATER: bool(current.get(CONF_ENERGY_WATER, False)),
+  }
+  for entry in hass.config_entries.async_entries(DOMAIN):
+    data = dict(entry.data or {})
+    for key in (CONF_ENERGY_ELECTRICITY, CONF_ENERGY_GAS, CONF_ENERGY_WATER):
+      if data.get(key):
+        result[key] = True
+  return result
+
 
 def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
   """Collect entities from all config entries to show the merged state."""
