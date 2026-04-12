@@ -472,8 +472,8 @@ class Tab5Bridge:
     if not self.config_topic or not self.device_id:
       return
     self._refresh_runtime_entity_lists()
-    energy_entries = await self._build_energy_meta()
-    config_data: dict[str, Any] = {
+    payload = json.dumps(
+      {
         "device_id": self.device_id,
         "base_topic": self.base_topic,
         "ha_prefix": self.ha_prefix,
@@ -487,10 +487,8 @@ class Tab5Bridge:
         "switch_meta": self._build_entity_meta(self.switches),
         "scene_meta": self._build_scene_meta(),
         "scene_map": self.scene_map,
-    }
-    if energy_entries:
-      config_data["energy"] = energy_entries
-    payload = json.dumps(config_data)
+      }
+    )
     _LOGGER.warning(
       "Tab5 LVGL DEBUG: Publishing config to topic '%s':\n%s",
       self.config_topic,
@@ -718,7 +716,7 @@ class Tab5Bridge:
       _LOGGER.warning("Tab5 energy request ignored (no energy sources configured)")
       return
 
-    # Build list of statistic IDs grouped by category with sign and price info.
+    # Build list of statistic IDs grouped by category with sign.
     entries: list[dict[str, Any]] = []
     for source in sources:
       src_type = source.get("type")
@@ -732,65 +730,44 @@ class Tab5Bridge:
         if "stat_energy_from" in source:
           stat_id = source.get("stat_energy_from")
           if stat_id:
-            price = source.get("number_energy_price")
-            price_entity = source.get("entity_energy_price")
-            stat_cost = source.get("stat_cost")
             entries.append({
               "stat_id": stat_id, "category": "grid", "sign": 1,
-              "price": price, "price_entity": price_entity, "stat_cost": stat_cost,
+              "stat_cost": source.get("stat_cost"),
             })
           stat_id_to = source.get("stat_energy_to")
           if stat_id_to:
-            price_export = source.get("number_energy_price_export")
-            price_entity_export = source.get("entity_energy_price_export")
-            stat_compensation = source.get("stat_compensation")
             entries.append({
               "stat_id": stat_id_to, "category": "grid", "sign": -1,
-              "price": price_export, "price_entity": price_entity_export,
-              "stat_cost": stat_compensation,
+              "stat_cost": source.get("stat_compensation"),
             })
         # Legacy grid format with flow_from / flow_to
         for flow in source.get("flow_from") or []:
           stat_id = flow.get("stat_energy_from")
-          if not stat_id:
-            continue
-          price = flow.get("number_energy_price")
-          price_entity = flow.get("entity_energy_price")
-          stat_cost = flow.get("stat_cost")
-          entries.append({
-            "stat_id": stat_id, "category": "grid", "sign": 1,
-            "price": price, "price_entity": price_entity, "stat_cost": stat_cost,
-          })
+          if stat_id:
+            entries.append({
+              "stat_id": stat_id, "category": "grid", "sign": 1,
+              "stat_cost": flow.get("stat_cost"),
+            })
         for flow in source.get("flow_to") or []:
           stat_id = flow.get("stat_energy_to")
-          if not stat_id:
-            continue
-          price = flow.get("number_energy_price")
-          price_entity = flow.get("entity_energy_price")
-          stat_compensation = flow.get("stat_compensation")
-          entries.append({
-            "stat_id": stat_id, "category": "grid", "sign": -1,
-            "price": price, "price_entity": price_entity,
-            "stat_cost": stat_compensation,
-          })
+          if stat_id:
+            entries.append({
+              "stat_id": stat_id, "category": "grid", "sign": -1,
+              "stat_cost": flow.get("stat_compensation"),
+            })
 
       elif src_type == "battery":
-        stat_from = source.get("stat_energy_from")
-        stat_to = source.get("stat_energy_to")
-        if stat_from:
-          entries.append({"stat_id": stat_from, "category": "battery", "sign": 1})
-        if stat_to:
-          entries.append({"stat_id": stat_to, "category": "battery", "sign": -1})
+        for key, sign in [("stat_energy_from", 1), ("stat_energy_to", -1)]:
+          stat_id = source.get(key)
+          if stat_id:
+            entries.append({"stat_id": stat_id, "category": "battery", "sign": sign})
 
       elif src_type == "gas":
         stat_id = source.get("stat_energy_from")
         if stat_id:
-          price = source.get("number_energy_price")
-          price_entity = source.get("entity_energy_price")
-          stat_cost = source.get("stat_cost")
           entries.append({
             "stat_id": stat_id, "category": "gas", "sign": 1,
-            "price": price, "price_entity": price_entity, "stat_cost": stat_cost,
+            "stat_cost": source.get("stat_cost"),
           })
 
     if not entries:
@@ -838,21 +815,6 @@ class Tab5Bridge:
       _LOGGER.exception("Tab5 energy: failed to fetch statistics")
       stats = {}
 
-    # Resolve price from entity if needed
-    def _resolve_price(entry: dict[str, Any]) -> float | None:
-      price = entry.get("price")
-      if isinstance(price, (int, float)):
-        return float(price)
-      price_entity = entry.get("price_entity")
-      if price_entity:
-        state = self.hass.states.get(price_entity)
-        if state:
-          try:
-            return float(state.state)
-          except (TypeError, ValueError):
-            pass
-      return None
-
     # Build response per entry
     result_entries: list[dict[str, Any]] = []
     for entry in entries:
@@ -868,10 +830,6 @@ class Tab5Bridge:
         else:
           changes.append(None)
 
-      # Apply sign to total
-      signed_total = round(total * entry["sign"], 3)
-
-      # Resolve name from entity state
       state = self.hass.states.get(stat_id)
       name = state.attributes.get("friendly_name") if state else None
       unit = state.attributes.get("unit_of_measurement") if state else None
@@ -881,23 +839,17 @@ class Tab5Bridge:
         "category": entry["category"],
         "sign": entry["sign"],
         "values": changes,
-        "total": signed_total,
+        "total": round(total * entry["sign"], 3),
       }
       if name:
         result_entry["name"] = name
       if unit:
         result_entry["unit"] = unit
 
-      # Resolve cost: prefer stat_cost, then calculate from price
-      price = _resolve_price(entry)
       cost_stat = entry.get("stat_cost")
       if cost_stat and cost_stat in stats:
-        cost_data = stats[cost_stat]
-        cost_total = sum(row.get("change") or 0.0 for row in cost_data)
+        cost_total = sum(row.get("change") or 0.0 for row in stats[cost_stat])
         result_entry["cost"] = round(cost_total, 2)
-      elif price is not None:
-        result_entry["cost"] = round(total * price * entry["sign"], 2)
-        result_entry["price"] = price
 
       result_entries.append(result_entry)
 
@@ -1378,101 +1330,6 @@ class Tab5Bridge:
     entities = list({entity for entity in self.scene_map.values() if entity})
     return self._build_entity_meta(entities)
 
-  async def _build_energy_meta(self) -> List[Dict[str, Any]]:
-    """Build energy source list from HA Energy Dashboard config."""
-    if async_get_energy_manager is None:
-      return []
-    try:
-      manager = await async_get_energy_manager(self.hass)
-    except Exception:
-      return []
-    prefs = manager.data
-    if not prefs:
-      return []
-    sources = prefs.get("energy_sources") or []
-    entries: List[Dict[str, Any]] = []
-    for source in sources:
-      src_type = source.get("type")
-      if src_type == "solar":
-        stat_id = source.get("stat_energy_from")
-        if stat_id:
-          state = self.hass.states.get(stat_id)
-          entry: Dict[str, Any] = {"id": stat_id, "category": "solar", "sign": 1}
-          if state and state.attributes.get("friendly_name"):
-            entry["name"] = state.attributes["friendly_name"]
-          if state and state.attributes.get("unit_of_measurement"):
-            entry["unit"] = state.attributes["unit_of_measurement"]
-          entries.append(entry)
-
-      elif src_type == "grid":
-        # New unified grid format
-        if "stat_energy_from" in source:
-          stat_id = source.get("stat_energy_from")
-          if stat_id:
-            state = self.hass.states.get(stat_id)
-            entry = {"id": stat_id, "category": "grid", "sign": 1}
-            if state and state.attributes.get("friendly_name"):
-              entry["name"] = state.attributes["friendly_name"]
-            if state and state.attributes.get("unit_of_measurement"):
-              entry["unit"] = state.attributes["unit_of_measurement"]
-            entries.append(entry)
-          stat_id_to = source.get("stat_energy_to")
-          if stat_id_to:
-            state = self.hass.states.get(stat_id_to)
-            entry = {"id": stat_id_to, "category": "grid", "sign": -1}
-            if state and state.attributes.get("friendly_name"):
-              entry["name"] = state.attributes["friendly_name"]
-            if state and state.attributes.get("unit_of_measurement"):
-              entry["unit"] = state.attributes["unit_of_measurement"]
-            entries.append(entry)
-        # Legacy grid format
-        for flow in source.get("flow_from") or []:
-          stat_id = flow.get("stat_energy_from")
-          if not stat_id:
-            continue
-          state = self.hass.states.get(stat_id)
-          entry = {"id": stat_id, "category": "grid", "sign": 1}
-          if state and state.attributes.get("friendly_name"):
-            entry["name"] = state.attributes["friendly_name"]
-          if state and state.attributes.get("unit_of_measurement"):
-            entry["unit"] = state.attributes["unit_of_measurement"]
-          entries.append(entry)
-        for flow in source.get("flow_to") or []:
-          stat_id = flow.get("stat_energy_to")
-          if not stat_id:
-            continue
-          state = self.hass.states.get(stat_id)
-          entry = {"id": stat_id, "category": "grid", "sign": -1}
-          if state and state.attributes.get("friendly_name"):
-            entry["name"] = state.attributes["friendly_name"]
-          if state and state.attributes.get("unit_of_measurement"):
-            entry["unit"] = state.attributes["unit_of_measurement"]
-          entries.append(entry)
-
-      elif src_type == "battery":
-        for key, sign in [("stat_energy_from", 1), ("stat_energy_to", -1)]:
-          stat_id = source.get(key)
-          if not stat_id:
-            continue
-          state = self.hass.states.get(stat_id)
-          entry = {"id": stat_id, "category": "battery", "sign": sign}
-          if state and state.attributes.get("friendly_name"):
-            entry["name"] = state.attributes["friendly_name"]
-          if state and state.attributes.get("unit_of_measurement"):
-            entry["unit"] = state.attributes["unit_of_measurement"]
-          entries.append(entry)
-
-      elif src_type == "gas":
-        stat_id = source.get("stat_energy_from")
-        if stat_id:
-          state = self.hass.states.get(stat_id)
-          entry = {"id": stat_id, "category": "gas", "sign": 1}
-          if state and state.attributes.get("friendly_name"):
-            entry["name"] = state.attributes["friendly_name"]
-          if state and state.attributes.get("unit_of_measurement"):
-            entry["unit"] = state.attributes["unit_of_measurement"]
-          entries.append(entry)
-    return entries
 
 
 def _unique_entities(entities: List[str]) -> List[str]:
