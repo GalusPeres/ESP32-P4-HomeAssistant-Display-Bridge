@@ -23,7 +23,7 @@
         "menu_options": {
           "panel": "Panel-Einstellungen",
           "entities": "Entity-Konfiguration",
-          "energy": "Energy Dashboard"
+          "energy": "Energie Dashboard"
         }
       },
       "panel": {
@@ -49,8 +49,8 @@
         }
       },
       "energy": {
-        "title": "Energy Dashboard",
-        "description": "Daten aus dem Home Assistant Energy Dashboard an die Ger\u00e4te senden.",
+        "title": "Energie Dashboard",
+        "description": "Daten aus dem Home Assistant Energie Dashboard an die Ger\u00e4te senden.",
         "data": {
           "energy_electricity": "Strom",
           "energy_gas": "Gas",

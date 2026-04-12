@@ -851,20 +851,53 @@ class Tab5Bridge:
 
     currency = self.hass.config.currency or "EUR"
 
+    def _as_float(value: Any) -> float | None:
+      if value is None:
+        return None
+      try:
+        return float(value)
+      except (TypeError, ValueError):
+        return None
+
+    def _apply_stat_sign(value: float, sign: int) -> float:
+      if sign < 0 and value > 0:
+        return -value
+      return value
+
+    def _changes_from_statistics(
+      rows: list[dict[str, Any]], precision: int
+    ) -> tuple[list[float | None], float]:
+      changes: list[float | None] = []
+      total = 0.0
+      previous_sum: float | None = None
+
+      for row in rows:
+        current_sum = _as_float(row.get("sum"))
+        change = _as_float(row.get("change"))
+
+        if change is None and current_sum is not None and previous_sum is not None:
+          change = current_sum - previous_sum
+
+        if current_sum is not None:
+          previous_sum = current_sum
+
+        if change is None:
+          changes.append(None)
+          continue
+
+        if abs(change) < 1e-9:
+          change = 0.0
+        changes.append(round(change, precision))
+        total += change
+
+      return changes, total
+
     # Build response per entry
     result_entries: list[dict[str, Any]] = []
     for entry in entries:
       stat_id = entry["stat_id"]
       stat_data = stats.get(stat_id, [])
-      changes: list[float | None] = []
-      total = 0.0
-      for row in stat_data:
-        change = row.get("change")
-        if change is not None:
-          changes.append(round(change, 3))
-          total += change
-        else:
-          changes.append(None)
+      changes, total = _changes_from_statistics(stat_data, 3)
 
       state = self.hass.states.get(stat_id)
       name = entry.get("device_name") or (
@@ -872,7 +905,7 @@ class Tab5Bridge:
       )
       unit = state.attributes.get("unit_of_measurement") if state else None
 
-      signed_total = round(total * entry["sign"], 3)
+      signed_total = round(_apply_stat_sign(total, entry["sign"]), 3)
 
       result_entry: dict[str, Any] = {
         "id": stat_id,
@@ -890,21 +923,13 @@ class Tab5Bridge:
       # Create separate cost entry if cost data exists
       cost_stat = entry.get("stat_cost")
       if cost_stat and cost_stat in stats:
-        cost_changes: list[float | None] = []
-        cost_total = 0.0
-        for row in stats[cost_stat]:
-          c = row.get("change")
-          if c is not None:
-            cost_changes.append(round(c, 4))
-            cost_total += c
-          else:
-            cost_changes.append(None)
+        cost_changes, cost_total = _changes_from_statistics(stats[cost_stat], 4)
         cost_entry: dict[str, Any] = {
           "id": f"{stat_id}_cost",
           "category": entry["category"],
           "sign": entry["sign"],
           "values": cost_changes,
-          "total": round(cost_total, 2),
+          "total": round(_apply_stat_sign(cost_total, entry["sign"]), 2),
           "unit": currency,
           "is_cost": True,
         }
@@ -941,7 +966,7 @@ class Tab5Bridge:
           for m in members:
             v = m["values"][i] if i < len(m["values"]) else None
             if v is not None:
-              s = v * m["sign"]
+              s = _apply_stat_sign(v, m["sign"])
               slot_sum = (slot_sum or 0.0) + s
           if slot_sum is not None:
             sum_values.append(round(slot_sum, 4 if is_cost else 3))
@@ -981,7 +1006,7 @@ class Tab5Bridge:
         for e in elec_kwh:
           v = e["values"][i] if i < len(e["values"]) else None
           if v is not None:
-            slot_sum = (slot_sum or 0.0) + v * e["sign"]
+            slot_sum = (slot_sum or 0.0) + _apply_stat_sign(v, e["sign"])
         if slot_sum is not None:
           consumption_values.append(round(slot_sum, 3))
         else:
