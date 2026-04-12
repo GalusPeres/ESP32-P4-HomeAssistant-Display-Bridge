@@ -968,6 +968,70 @@ class Tab5Bridge:
 
         result_entries.append(total_entry)
 
+    # Build "Gesamtverbrauch" and "Nicht erfasster Verbrauch"
+    electricity_cats = {"solar", "grid", "battery"}
+    elec_kwh = [e for e in result_entries
+                if e["category"] in electricity_cats
+                and not e.get("is_total") and not e.get("is_cost")]
+    if elec_kwh:
+      max_len = max(len(e["values"]) for e in elec_kwh)
+      consumption_values: list[float | None] = []
+      for i in range(max_len):
+        slot_sum: float | None = None
+        for e in elec_kwh:
+          v = e["values"][i] if i < len(e["values"]) else None
+          if v is not None:
+            slot_sum = (slot_sum or 0.0) + v * e["sign"]
+        if slot_sum is not None:
+          consumption_values.append(round(slot_sum, 3))
+        else:
+          consumption_values.append(None)
+      consumption_total = round(sum(e["total"] for e in elec_kwh), 3)
+
+      result_entries.append({
+        "id": "consumption_total",
+        "category": "consumption",
+        "sign": 1,
+        "name": "Gesamtverbrauch",
+        "unit": "kWh",
+        "values": consumption_values,
+        "total": consumption_total,
+        "is_total": True,
+      })
+
+      # "Nicht erfasster Verbrauch" = Gesamtverbrauch - Geräte
+      device_kwh = [e for e in result_entries
+                    if e["category"] == "device"
+                    and not e.get("is_total") and not e.get("is_cost")]
+      if device_kwh:
+        device_sum = sum(e["total"] for e in device_kwh)
+        dev_max = max(len(e["values"]) for e in device_kwh)
+        untracked_values: list[float | None] = []
+        for i in range(max_len):
+          cv = consumption_values[i] if i < len(consumption_values) else None
+          dv_sum = 0.0
+          has_dev = False
+          for e in device_kwh:
+            v = e["values"][i] if i < len(e["values"]) else None
+            if v is not None:
+              dv_sum += v
+              has_dev = True
+          if cv is not None:
+            untracked_values.append(round(cv - (dv_sum if has_dev else 0.0), 3))
+          else:
+            untracked_values.append(None)
+
+        result_entries.append({
+          "id": "consumption_untracked",
+          "category": "consumption",
+          "sign": 1,
+          "name": "Nicht erfasster Verbrauch",
+          "unit": "kWh",
+          "values": untracked_values,
+          "total": round(consumption_total - device_sum, 3),
+          "is_total": True,
+        })
+
     response: dict[str, Any] = {
       "period": period,
       "stat_period": stat_period,
@@ -1629,7 +1693,33 @@ class Tab5Bridge:
           total_entry["unit"] = members[0]["unit"]
         entries.append(total_entry)
 
+    # Add Gesamtverbrauch and Nicht erfasster Verbrauch meta
+    electricity_cats = {"solar", "grid", "battery"}
+    has_electricity = any(e["category"] in electricity_cats for e in entries
+                         if not e.get("is_total") and not e.get("is_cost"))
+    if has_electricity:
+      entries.append({
+        "id": "consumption_total",
+        "category": "consumption",
+        "sign": 1,
+        "name": "Gesamtverbrauch",
+        "unit": "kWh",
+        "is_total": True,
+      })
+      has_devices = any(e["category"] == "device" for e in entries
+                        if not e.get("is_total") and not e.get("is_cost"))
+      if has_devices:
+        entries.append({
+          "id": "consumption_untracked",
+          "category": "consumption",
+          "sign": 1,
+          "name": "Nicht erfasster Verbrauch",
+          "unit": "kWh",
+          "is_total": True,
+        })
+
     if categories:
+      categories = categories | {"consumption"}
       entries = [e for e in entries if e["category"] in categories]
 
     return entries
