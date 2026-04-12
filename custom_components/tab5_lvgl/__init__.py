@@ -727,11 +727,28 @@ class Tab5Bridge:
     sources = prefs.get("energy_sources") or []
     devices = prefs.get("device_consumption") or []
     devices_water = prefs.get("device_consumption_water") or []
+    energy_runtime = self.hass.data.get("energy") or {}
+    cost_sensors = energy_runtime.get("cost_sensors") or {}
 
-    def _price_fields(config: dict[str, Any]) -> dict[str, Any]:
+    def _cost_stat(configured_cost: Any, energy_stat: str | None) -> str | None:
+      if isinstance(configured_cost, str) and configured_cost.strip():
+        return configured_cost.strip()
+      if isinstance(energy_stat, str) and energy_stat.strip():
+        mapped = cost_sensors.get(energy_stat.strip())
+        if isinstance(mapped, str) and mapped.strip():
+          return mapped.strip()
+      return None
+
+    def _price_fields(config: dict[str, Any], export: bool = False) -> dict[str, Any]:
+      price_entity_key = "entity_energy_price_export" if export else "entity_energy_price"
+      number_price_key = "number_energy_price_export" if export else "number_energy_price"
       return {
-        "price_entity": config.get("entity_energy_price"),
-        "number_energy_price": config.get("number_energy_price"),
+        "price_entity": config.get(price_entity_key) or config.get("entity_energy_price"),
+        "number_energy_price": (
+          config.get(number_price_key)
+          if config.get(number_price_key) is not None
+          else config.get("number_energy_price")
+        ),
       }
 
     # Build list of statistic IDs grouped by category with sign.
@@ -749,22 +766,22 @@ class Tab5Bridge:
           if stat_id:
             entries.append({
               "stat_id": stat_id, "category": "grid", "sign": 1,
-              "stat_cost": source.get("stat_cost"),
+              "stat_cost": _cost_stat(source.get("stat_cost"), stat_id),
               **_price_fields(source),
             })
           stat_id_to = source.get("stat_energy_to")
           if stat_id_to:
             entries.append({
               "stat_id": stat_id_to, "category": "grid", "sign": -1,
-              "stat_cost": source.get("stat_compensation"),
-              **_price_fields(source),
+              "stat_cost": _cost_stat(source.get("stat_compensation"), stat_id_to),
+              **_price_fields(source, export=True),
             })
         for flow in source.get("flow_from") or []:
           stat_id = flow.get("stat_energy_from")
           if stat_id:
             entries.append({
               "stat_id": stat_id, "category": "grid", "sign": 1,
-              "stat_cost": flow.get("stat_cost"),
+              "stat_cost": _cost_stat(flow.get("stat_cost"), stat_id),
               **_price_fields(flow),
             })
         for flow in source.get("flow_to") or []:
@@ -772,7 +789,7 @@ class Tab5Bridge:
           if stat_id:
             entries.append({
               "stat_id": stat_id, "category": "grid", "sign": -1,
-              "stat_cost": flow.get("stat_compensation"),
+              "stat_cost": _cost_stat(flow.get("stat_compensation"), stat_id),
               **_price_fields(flow),
             })
 
@@ -787,7 +804,7 @@ class Tab5Bridge:
         if stat_id:
           entries.append({
             "stat_id": stat_id, "category": "gas", "sign": 1,
-            "stat_cost": source.get("stat_cost"),
+            "stat_cost": _cost_stat(source.get("stat_cost"), stat_id),
             **_price_fields(source),
           })
 
@@ -796,7 +813,7 @@ class Tab5Bridge:
         if stat_id:
           entries.append({
             "stat_id": stat_id, "category": "water", "sign": 1,
-            "stat_cost": source.get("stat_cost"),
+            "stat_cost": _cost_stat(source.get("stat_cost"), stat_id),
             **_price_fields(source),
           })
 
@@ -1615,10 +1632,33 @@ class Tab5Bridge:
     devices = prefs.get("device_consumption") or []
     devices_water = prefs.get("device_consumption_water") or []
     entries: List[Dict[str, Any]] = []
+    energy_runtime = self.hass.data.get("energy") or {}
+    cost_sensors = energy_runtime.get("cost_sensors") or {}
 
-    def _has_cost_config(config: dict[str, Any], cost_key: str) -> bool:
+    def _has_cost_config(
+      config: dict[str, Any], cost_key: str, energy_stat: str | None
+    ) -> bool:
       return bool(
         config.get(cost_key)
+        or (
+          isinstance(energy_stat, str)
+          and energy_stat.strip()
+          and cost_sensors.get(energy_stat.strip())
+        )
+        or config.get("entity_energy_price")
+        or config.get("number_energy_price") is not None
+      )
+
+    def _has_export_cost_config(config: dict[str, Any], energy_stat: str | None) -> bool:
+      return bool(
+        config.get("stat_compensation")
+        or (
+          isinstance(energy_stat, str)
+          and energy_stat.strip()
+          and cost_sensors.get(energy_stat.strip())
+        )
+        or config.get("entity_energy_price_export")
+        or config.get("number_energy_price_export") is not None
         or config.get("entity_energy_price")
         or config.get("number_energy_price") is not None
       )
@@ -1642,7 +1682,7 @@ class Tab5Bridge:
           if stat_id:
             state = self.hass.states.get(stat_id)
             entry = {"id": stat_id, "category": "grid", "sign": 1}
-            entry["_has_cost"] = _has_cost_config(source, "stat_cost")
+            entry["_has_cost"] = _has_cost_config(source, "stat_cost", stat_id)
             if state and state.attributes.get("friendly_name"):
               entry["name"] = state.attributes["friendly_name"]
             if state and state.attributes.get("unit_of_measurement"):
@@ -1652,7 +1692,7 @@ class Tab5Bridge:
           if stat_id_to:
             state = self.hass.states.get(stat_id_to)
             entry = {"id": stat_id_to, "category": "grid", "sign": -1}
-            entry["_has_cost"] = _has_cost_config(source, "stat_compensation")
+            entry["_has_cost"] = _has_export_cost_config(source, stat_id_to)
             if state and state.attributes.get("friendly_name"):
               entry["name"] = state.attributes["friendly_name"]
             if state and state.attributes.get("unit_of_measurement"):
@@ -1664,7 +1704,7 @@ class Tab5Bridge:
             continue
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "grid", "sign": 1}
-          entry["_has_cost"] = _has_cost_config(flow, "stat_cost")
+          entry["_has_cost"] = _has_cost_config(flow, "stat_cost", stat_id)
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
@@ -1676,7 +1716,7 @@ class Tab5Bridge:
             continue
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "grid", "sign": -1}
-          entry["_has_cost"] = _has_cost_config(flow, "stat_compensation")
+          entry["_has_cost"] = _has_cost_config(flow, "stat_compensation", stat_id)
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
@@ -1701,7 +1741,7 @@ class Tab5Bridge:
         if stat_id:
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "gas", "sign": 1}
-          entry["_has_cost"] = _has_cost_config(source, "stat_cost")
+          entry["_has_cost"] = _has_cost_config(source, "stat_cost", stat_id)
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
@@ -1713,7 +1753,7 @@ class Tab5Bridge:
         if stat_id:
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "water", "sign": 1}
-          entry["_has_cost"] = _has_cost_config(source, "stat_cost")
+          entry["_has_cost"] = _has_cost_config(source, "stat_cost", stat_id)
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
