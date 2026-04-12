@@ -51,7 +51,9 @@ from .const import (
   CONF_BASE_TOPIC,
   CONF_DEVICE_ID,
   CONF_DEVICE_NAME,
-  CONF_ENERGY_ENABLED,
+  CONF_ENERGY_ELECTRICITY,
+  CONF_ENERGY_GAS,
+  CONF_ENERGY_WATER,
   CONF_HA_PREFIX,
   CONF_LIGHTS,
   CONF_MANUFACTURER,
@@ -488,8 +490,15 @@ class Tab5Bridge:
         "scene_meta": self._build_scene_meta(),
         "scene_map": self.scene_map,
     }
-    if self.config_entry.data.get(CONF_ENERGY_ENABLED):
-      energy_entries = await self._build_energy_meta()
+    energy_cats = set()
+    if self.config_entry.data.get(CONF_ENERGY_ELECTRICITY):
+      energy_cats.update({"solar", "grid", "battery", "device"})
+    if self.config_entry.data.get(CONF_ENERGY_GAS):
+      energy_cats.add("gas")
+    if self.config_entry.data.get(CONF_ENERGY_WATER):
+      energy_cats.update({"water", "device_water"})
+    if energy_cats:
+      energy_entries = await self._build_energy_meta(energy_cats)
       if energy_entries:
         config_data["energy"] = energy_entries
     payload = json.dumps(config_data)
@@ -861,18 +870,22 @@ class Tab5Bridge:
       )
       unit = state.attributes.get("unit_of_measurement") if state else None
 
+      signed_total = round(total * entry["sign"], 3)
+
       result_entry: dict[str, Any] = {
         "id": stat_id,
         "category": entry["category"],
         "sign": entry["sign"],
         "values": changes,
-        "total": round(total * entry["sign"], 3),
+        "total": signed_total,
       }
       if name:
         result_entry["name"] = name
       if unit:
         result_entry["unit"] = unit
+      result_entries.append(result_entry)
 
+      # Create separate cost entry if cost data exists
       cost_stat = entry.get("stat_cost")
       if cost_stat and cost_stat in stats:
         cost_changes: list[float | None] = []
@@ -884,12 +897,21 @@ class Tab5Bridge:
             cost_total += c
           else:
             cost_changes.append(None)
-        result_entry["cost"] = round(cost_total, 2)
-        result_entry["cost_values"] = cost_changes
-
-      result_entries.append(result_entry)
+        cost_entry: dict[str, Any] = {
+          "id": f"{stat_id}_cost",
+          "category": entry["category"],
+          "sign": entry["sign"],
+          "values": cost_changes,
+          "total": round(cost_total, 2),
+          "unit": "€",
+          "is_cost": True,
+        }
+        if name:
+          cost_entry["name"] = f"{name} (€)"
+        result_entries.append(cost_entry)
 
     # Build total entries per category with multiple members
+    # Separate kWh entries and cost entries for independent totals
     category_names = {
       "solar": "PV gesamt",
       "grid": "Netz gesamt",
@@ -899,66 +921,50 @@ class Tab5Bridge:
       "device": "Geräte gesamt",
       "device_water": "Wassergeräte gesamt",
     }
-    cat_entries: dict[str, list[dict[str, Any]]] = {}
-    for re in result_entries:
-      cat_entries.setdefault(re["category"], []).append(re)
+    kwh_entries = [e for e in result_entries if not e.get("is_cost")]
+    cost_entries = [e for e in result_entries if e.get("is_cost")]
 
-    for cat, members in cat_entries.items():
-      if len(members) < 2:
-        continue
-      # Sum values per slot
-      max_len = max(len(m["values"]) for m in members)
-      sum_values: list[float | None] = []
-      for i in range(max_len):
-        slot_sum: float | None = None
-        for m in members:
-          v = m["values"][i] if i < len(m["values"]) else None
-          if v is not None:
-            s = v * m["sign"]
-            slot_sum = (slot_sum or 0.0) + s
-          # None slots stay None unless at least one member has data
-        if slot_sum is not None:
-          sum_values.append(round(slot_sum, 3))
-        else:
-          sum_values.append(None)
+    for group, is_cost in [(kwh_entries, False), (cost_entries, True)]:
+      cat_groups: dict[str, list[dict[str, Any]]] = {}
+      for e in group:
+        cat_groups.setdefault(e["category"], []).append(e)
 
-      total_sum = round(sum(m["total"] for m in members), 3)
+      for cat, members in cat_groups.items():
+        if len(members) < 2:
+          continue
+        max_len = max(len(m["values"]) for m in members)
+        sum_values: list[float | None] = []
+        for i in range(max_len):
+          slot_sum: float | None = None
+          for m in members:
+            v = m["values"][i] if i < len(m["values"]) else None
+            if v is not None:
+              s = v * m["sign"]
+              slot_sum = (slot_sum or 0.0) + s
+          if slot_sum is not None:
+            sum_values.append(round(slot_sum, 4 if is_cost else 3))
+          else:
+            sum_values.append(None)
 
-      total_entry: dict[str, Any] = {
-        "id": f"{cat}_total",
-        "category": cat,
-        "sign": 1,
-        "name": category_names.get(cat, f"{cat} gesamt"),
-        "values": sum_values,
-        "total": total_sum,
-        "is_total": True,
-      }
-      # Use unit from first member
-      if members[0].get("unit"):
-        total_entry["unit"] = members[0]["unit"]
+        total_sum = round(sum(m["total"] for m in members), 2 if is_cost else 3)
+        base_name = category_names.get(cat, f"{cat} gesamt")
 
-      # Sum cost if any member has it
-      cost_members = [m for m in members if "cost" in m]
-      if cost_members:
-        total_entry["cost"] = round(sum(m["cost"] for m in cost_members), 2)
-        # Sum cost_values per slot
-        cv_members = [m for m in cost_members if "cost_values" in m]
-        if cv_members:
-          cv_max = max(len(m["cost_values"]) for m in cv_members)
-          sum_cv: list[float | None] = []
-          for i in range(cv_max):
-            cv_sum: float | None = None
-            for m in cv_members:
-              c = m["cost_values"][i] if i < len(m["cost_values"]) else None
-              if c is not None:
-                cv_sum = (cv_sum or 0.0) + c
-            if cv_sum is not None:
-              sum_cv.append(round(cv_sum, 4))
-            else:
-              sum_cv.append(None)
-          total_entry["cost_values"] = sum_cv
+        total_entry: dict[str, Any] = {
+          "id": f"{cat}_total" + ("_cost" if is_cost else ""),
+          "category": cat,
+          "sign": 1,
+          "name": f"{base_name} (€)" if is_cost else base_name,
+          "values": sum_values,
+          "total": total_sum,
+          "is_total": True,
+        }
+        if is_cost:
+          total_entry["unit"] = "€"
+          total_entry["is_cost"] = True
+        elif members[0].get("unit"):
+          total_entry["unit"] = members[0]["unit"]
 
-      result_entries.append(total_entry)
+        result_entries.append(total_entry)
 
     response: dict[str, Any] = {
       "period": period,
@@ -1437,7 +1443,7 @@ class Tab5Bridge:
     entities = list({entity for entity in self.scene_map.values() if entity})
     return self._build_entity_meta(entities)
 
-  async def _build_energy_meta(self) -> List[Dict[str, Any]]:
+  async def _build_energy_meta(self, categories: set[str] | None = None) -> List[Dict[str, Any]]:
     """Build energy source list from HA Energy Dashboard config."""
     if async_get_energy_manager is None:
       return []
@@ -1571,6 +1577,21 @@ class Tab5Bridge:
           entry["unit"] = state.attributes["unit_of_measurement"]
         entries.append(entry)
 
+    # Add cost meta entries for sources that have stat_cost
+    cost_cats = {"grid", "gas", "water"}
+    cost_meta: List[Dict[str, Any]] = []
+    for e in entries:
+      if e["category"] in cost_cats:
+        cost_meta.append({
+          "id": f"{e['id']}_cost",
+          "category": e["category"],
+          "sign": e["sign"],
+          "name": f"{e.get('name', e['id'])} (€)",
+          "unit": "€",
+          "is_cost": True,
+        })
+    entries.extend(cost_meta)
+
     # Add total entries for categories with multiple members
     category_names = {
       "solar": "PV gesamt",
@@ -1581,22 +1602,32 @@ class Tab5Bridge:
       "device": "Geräte gesamt",
       "device_water": "Wassergeräte gesamt",
     }
-    cat_entries: Dict[str, list] = {}
-    for e in entries:
-      cat_entries.setdefault(e["category"], []).append(e)
-    for cat, members in cat_entries.items():
-      if len(members) < 2:
-        continue
-      total_entry: Dict[str, Any] = {
-        "id": f"{cat}_total",
-        "category": cat,
-        "sign": 1,
-        "name": category_names.get(cat, f"{cat} gesamt"),
-        "is_total": True,
-      }
-      if members[0].get("unit"):
-        total_entry["unit"] = members[0]["unit"]
-      entries.append(total_entry)
+    kwh_entries = [e for e in entries if not e.get("is_cost")]
+    cost_entries = [e for e in entries if e.get("is_cost")]
+    for group, is_cost in [(kwh_entries, False), (cost_entries, True)]:
+      cat_groups: Dict[str, list] = {}
+      for e in group:
+        cat_groups.setdefault(e["category"], []).append(e)
+      for cat, members in cat_groups.items():
+        if len(members) < 2:
+          continue
+        base_name = category_names.get(cat, f"{cat} gesamt")
+        total_entry: Dict[str, Any] = {
+          "id": f"{cat}_total" + ("_cost" if is_cost else ""),
+          "category": cat,
+          "sign": 1,
+          "name": f"{base_name} (€)" if is_cost else base_name,
+          "is_total": True,
+        }
+        if is_cost:
+          total_entry["unit"] = "€"
+          total_entry["is_cost"] = True
+        elif members[0].get("unit"):
+          total_entry["unit"] = members[0]["unit"]
+        entries.append(total_entry)
+
+    if categories:
+      entries = [e for e in entries if e["category"] in categories]
 
     return entries
 

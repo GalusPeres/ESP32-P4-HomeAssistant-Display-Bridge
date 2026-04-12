@@ -12,7 +12,9 @@ CONF_MANUFACTURER = "manufacturer"
 CONF_MODEL = "model"
 CONF_DEVICE_NAME = "device_name"
 
-CONF_ENERGY_ENABLED = "energy_enabled"
+CONF_ENERGY_ELECTRICITY = "energy_electricity"
+CONF_ENERGY_GAS = "energy_gas"
+CONF_ENERGY_WATER = "energy_water"
 
 CONF_SENSORS = "sensors"
 CONF_WEATHERS = "weathers"

@@ -15,7 +15,9 @@ from .const import (
   CONF_BASE_TOPIC,
   CONF_DEVICE_ID,
   CONF_DEVICE_NAME,
-  CONF_ENERGY_ENABLED,
+  CONF_ENERGY_ELECTRICITY,
+  CONF_ENERGY_GAS,
+  CONF_ENERGY_WATER,
   CONF_HA_PREFIX,
   CONF_LIGHTS,
   CONF_MANUFACTURER,
@@ -153,7 +155,9 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
     return self.async_show_form(
       step_id="entities",
       data_schema=vol.Schema({
-        vol.Optional(CONF_ENERGY_ENABLED, default=current.get(CONF_ENERGY_ENABLED, False)): bool,
+        vol.Optional(CONF_ENERGY_ELECTRICITY, default=current.get(CONF_ENERGY_ELECTRICITY, False)): bool,
+        vol.Optional(CONF_ENERGY_GAS, default=current.get(CONF_ENERGY_GAS, False)): bool,
+        vol.Optional(CONF_ENERGY_WATER, default=current.get(CONF_ENERGY_WATER, False)): bool,
         vol.Optional(CONF_SENSORS, default=merged.get(CONF_SENSORS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(multiple=True)
         ),
@@ -244,7 +248,10 @@ def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) ->
   scene_map.update(manual_map)
 
   updated = dict(current)
-  updated[CONF_ENERGY_ENABLED] = bool(user_input.get(CONF_ENERGY_ENABLED, False))
+  updated.pop("energy_enabled", None)  # remove old single checkbox
+  updated[CONF_ENERGY_ELECTRICITY] = bool(user_input.get(CONF_ENERGY_ELECTRICITY, False))
+  updated[CONF_ENERGY_GAS] = bool(user_input.get(CONF_ENERGY_GAS, False))
+  updated[CONF_ENERGY_WATER] = bool(user_input.get(CONF_ENERGY_WATER, False))
   updated[CONF_SENSORS] = sensors
   updated[CONF_WEATHERS] = weathers
   updated[CONF_LIGHTS] = lights

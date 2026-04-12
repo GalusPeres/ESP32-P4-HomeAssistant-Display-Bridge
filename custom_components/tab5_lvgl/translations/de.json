@@ -39,7 +39,9 @@
         "title": "Entity-Konfiguration",
         "description": "Gilt f\u00fcr alle Panels. \u00c4nderungen hier wirken sich auf jedes verbundene Ger\u00e4t aus.",
         "data": {
-          "energy_enabled": "Energy Dashboard senden",
+          "energy_electricity": "Energy: Strom",
+          "energy_gas": "Energy: Gas",
+          "energy_water": "Energy: Wasser",
           "sensors": "Sensoren",
           "weathers": "Wetter",
           "lights": "Lichter",
