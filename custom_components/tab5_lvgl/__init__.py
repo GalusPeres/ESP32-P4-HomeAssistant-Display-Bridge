@@ -889,6 +889,77 @@ class Tab5Bridge:
 
       result_entries.append(result_entry)
 
+    # Build total entries per category with multiple members
+    category_names = {
+      "solar": "PV gesamt",
+      "grid": "Netz gesamt",
+      "battery": "Batterie gesamt",
+      "gas": "Gas gesamt",
+      "water": "Wasser gesamt",
+      "device": "Geräte gesamt",
+      "device_water": "Wassergeräte gesamt",
+    }
+    cat_entries: dict[str, list[dict[str, Any]]] = {}
+    for re in result_entries:
+      cat_entries.setdefault(re["category"], []).append(re)
+
+    for cat, members in cat_entries.items():
+      if len(members) < 2:
+        continue
+      # Sum values per slot
+      max_len = max(len(m["values"]) for m in members)
+      sum_values: list[float | None] = []
+      for i in range(max_len):
+        slot_sum: float | None = None
+        for m in members:
+          v = m["values"][i] if i < len(m["values"]) else None
+          if v is not None:
+            s = v * m["sign"]
+            slot_sum = (slot_sum or 0.0) + s
+          # None slots stay None unless at least one member has data
+        if slot_sum is not None:
+          sum_values.append(round(slot_sum, 3))
+        else:
+          sum_values.append(None)
+
+      total_sum = round(sum(m["total"] for m in members), 3)
+
+      total_entry: dict[str, Any] = {
+        "id": f"{cat}_total",
+        "category": cat,
+        "sign": 1,
+        "name": category_names.get(cat, f"{cat} gesamt"),
+        "values": sum_values,
+        "total": total_sum,
+        "is_total": True,
+      }
+      # Use unit from first member
+      if members[0].get("unit"):
+        total_entry["unit"] = members[0]["unit"]
+
+      # Sum cost if any member has it
+      cost_members = [m for m in members if "cost" in m]
+      if cost_members:
+        total_entry["cost"] = round(sum(m["cost"] for m in cost_members), 2)
+        # Sum cost_values per slot
+        cv_members = [m for m in cost_members if "cost_values" in m]
+        if cv_members:
+          cv_max = max(len(m["cost_values"]) for m in cv_members)
+          sum_cv: list[float | None] = []
+          for i in range(cv_max):
+            cv_sum: float | None = None
+            for m in cv_members:
+              c = m["cost_values"][i] if i < len(m["cost_values"]) else None
+              if c is not None:
+                cv_sum = (cv_sum or 0.0) + c
+            if cv_sum is not None:
+              sum_cv.append(round(cv_sum, 4))
+            else:
+              sum_cv.append(None)
+          total_entry["cost_values"] = sum_cv
+
+      result_entries.append(total_entry)
+
     response: dict[str, Any] = {
       "period": period,
       "stat_period": stat_period,
@@ -1499,6 +1570,33 @@ class Tab5Bridge:
         if state and state.attributes.get("unit_of_measurement"):
           entry["unit"] = state.attributes["unit_of_measurement"]
         entries.append(entry)
+
+    # Add total entries for categories with multiple members
+    category_names = {
+      "solar": "PV gesamt",
+      "grid": "Netz gesamt",
+      "battery": "Batterie gesamt",
+      "gas": "Gas gesamt",
+      "water": "Wasser gesamt",
+      "device": "Geräte gesamt",
+      "device_water": "Wassergeräte gesamt",
+    }
+    cat_entries: Dict[str, list] = {}
+    for e in entries:
+      cat_entries.setdefault(e["category"], []).append(e)
+    for cat, members in cat_entries.items():
+      if len(members) < 2:
+        continue
+      total_entry: Dict[str, Any] = {
+        "id": f"{cat}_total",
+        "category": cat,
+        "sign": 1,
+        "name": category_names.get(cat, f"{cat} gesamt"),
+        "is_total": True,
+      }
+      if members[0].get("unit"):
+        total_entry["unit"] = members[0]["unit"]
+      entries.append(total_entry)
 
     return entries
 
