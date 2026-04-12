@@ -51,6 +51,7 @@ from .const import (
   CONF_BASE_TOPIC,
   CONF_DEVICE_ID,
   CONF_DEVICE_NAME,
+  CONF_ENERGY_ENABLED,
   CONF_HA_PREFIX,
   CONF_LIGHTS,
   CONF_MANUFACTURER,
@@ -472,8 +473,7 @@ class Tab5Bridge:
     if not self.config_topic or not self.device_id:
       return
     self._refresh_runtime_entity_lists()
-    payload = json.dumps(
-      {
+    config_data: dict[str, Any] = {
         "device_id": self.device_id,
         "base_topic": self.base_topic,
         "ha_prefix": self.ha_prefix,
@@ -487,8 +487,12 @@ class Tab5Bridge:
         "switch_meta": self._build_entity_meta(self.switches),
         "scene_meta": self._build_scene_meta(),
         "scene_map": self.scene_map,
-      }
-    )
+    }
+    if self.config_entry.data.get(CONF_ENERGY_ENABLED):
+      energy_entries = await self._build_energy_meta()
+      if energy_entries:
+        config_data["energy"] = energy_entries
+    payload = json.dumps(config_data)
     _LOGGER.warning(
       "Tab5 LVGL DEBUG: Publishing config to topic '%s':\n%s",
       self.config_topic,
@@ -1330,6 +1334,99 @@ class Tab5Bridge:
     entities = list({entity for entity in self.scene_map.values() if entity})
     return self._build_entity_meta(entities)
 
+  async def _build_energy_meta(self) -> List[Dict[str, Any]]:
+    """Build energy source list from HA Energy Dashboard config."""
+    if async_get_energy_manager is None:
+      return []
+    try:
+      manager = await async_get_energy_manager(self.hass)
+    except Exception:
+      return []
+    prefs = manager.data
+    if not prefs:
+      return []
+    sources = prefs.get("energy_sources") or []
+    entries: List[Dict[str, Any]] = []
+    for source in sources:
+      src_type = source.get("type")
+      if src_type == "solar":
+        stat_id = source.get("stat_energy_from")
+        if stat_id:
+          state = self.hass.states.get(stat_id)
+          entry: Dict[str, Any] = {"id": stat_id, "category": "solar", "sign": 1}
+          if state and state.attributes.get("friendly_name"):
+            entry["name"] = state.attributes["friendly_name"]
+          if state and state.attributes.get("unit_of_measurement"):
+            entry["unit"] = state.attributes["unit_of_measurement"]
+          entries.append(entry)
+
+      elif src_type == "grid":
+        if "stat_energy_from" in source:
+          stat_id = source.get("stat_energy_from")
+          if stat_id:
+            state = self.hass.states.get(stat_id)
+            entry = {"id": stat_id, "category": "grid", "sign": 1}
+            if state and state.attributes.get("friendly_name"):
+              entry["name"] = state.attributes["friendly_name"]
+            if state and state.attributes.get("unit_of_measurement"):
+              entry["unit"] = state.attributes["unit_of_measurement"]
+            entries.append(entry)
+          stat_id_to = source.get("stat_energy_to")
+          if stat_id_to:
+            state = self.hass.states.get(stat_id_to)
+            entry = {"id": stat_id_to, "category": "grid", "sign": -1}
+            if state and state.attributes.get("friendly_name"):
+              entry["name"] = state.attributes["friendly_name"]
+            if state and state.attributes.get("unit_of_measurement"):
+              entry["unit"] = state.attributes["unit_of_measurement"]
+            entries.append(entry)
+        for flow in source.get("flow_from") or []:
+          stat_id = flow.get("stat_energy_from")
+          if not stat_id:
+            continue
+          state = self.hass.states.get(stat_id)
+          entry = {"id": stat_id, "category": "grid", "sign": 1}
+          if state and state.attributes.get("friendly_name"):
+            entry["name"] = state.attributes["friendly_name"]
+          if state and state.attributes.get("unit_of_measurement"):
+            entry["unit"] = state.attributes["unit_of_measurement"]
+          entries.append(entry)
+        for flow in source.get("flow_to") or []:
+          stat_id = flow.get("stat_energy_to")
+          if not stat_id:
+            continue
+          state = self.hass.states.get(stat_id)
+          entry = {"id": stat_id, "category": "grid", "sign": -1}
+          if state and state.attributes.get("friendly_name"):
+            entry["name"] = state.attributes["friendly_name"]
+          if state and state.attributes.get("unit_of_measurement"):
+            entry["unit"] = state.attributes["unit_of_measurement"]
+          entries.append(entry)
+
+      elif src_type == "battery":
+        for key, sign in [("stat_energy_from", 1), ("stat_energy_to", -1)]:
+          stat_id = source.get(key)
+          if not stat_id:
+            continue
+          state = self.hass.states.get(stat_id)
+          entry = {"id": stat_id, "category": "battery", "sign": sign}
+          if state and state.attributes.get("friendly_name"):
+            entry["name"] = state.attributes["friendly_name"]
+          if state and state.attributes.get("unit_of_measurement"):
+            entry["unit"] = state.attributes["unit_of_measurement"]
+          entries.append(entry)
+
+      elif src_type == "gas":
+        stat_id = source.get("stat_energy_from")
+        if stat_id:
+          state = self.hass.states.get(stat_id)
+          entry = {"id": stat_id, "category": "gas", "sign": 1}
+          if state and state.attributes.get("friendly_name"):
+            entry["name"] = state.attributes["friendly_name"]
+          if state and state.attributes.get("unit_of_measurement"):
+            entry["unit"] = state.attributes["unit_of_measurement"]
+          entries.append(entry)
+    return entries
 
 
 def _unique_entities(entities: List[str]) -> List[str]:

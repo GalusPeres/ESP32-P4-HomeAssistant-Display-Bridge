@@ -12,6 +12,8 @@ CONF_MANUFACTURER = "manufacturer"
 CONF_MODEL = "model"
 CONF_DEVICE_NAME = "device_name"
 
+CONF_ENERGY_ENABLED = "energy_enabled"
+
 CONF_SENSORS = "sensors"
 CONF_WEATHERS = "weathers"
 CONF_LIGHTS = "lights"

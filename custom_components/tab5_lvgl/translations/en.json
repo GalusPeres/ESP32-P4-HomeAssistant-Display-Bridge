@@ -39,6 +39,7 @@
         "title": "Entity configuration",
         "description": "Applies to all panels. Changes here affect every connected device.",
         "data": {
+          "energy_enabled": "Send Energy Dashboard",
           "sensors": "Sensors",
           "weathers": "Weather",
           "lights": "Lights",
