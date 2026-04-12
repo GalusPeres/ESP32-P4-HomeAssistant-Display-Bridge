@@ -956,6 +956,9 @@ class Tab5Bridge:
 
       return cost_changes, cost_total
 
+    def _has_numeric_change(changes: list[float | None]) -> bool:
+      return any(change is not None for change in changes)
+
     # Build response per entry
     result_entries: list[dict[str, Any]] = []
     for entry in entries:
@@ -989,9 +992,13 @@ class Tab5Bridge:
       cost_changes: list[float | None] | None = None
       cost_total = 0.0
 
-      if cost_stat and cost_stat in stats:
-        cost_changes, cost_total = _changes_from_statistics(stats[cost_stat], 4)
-      elif (price := _price_for_entry(entry)) is not None:
+      if cost_stat and (cost_rows := stats.get(cost_stat)):
+        cost_changes, cost_total = _changes_from_statistics(cost_rows, 4)
+        if not _has_numeric_change(cost_changes):
+          cost_changes = None
+          cost_total = 0.0
+
+      if cost_changes is None and (price := _price_for_entry(entry)) is not None:
         cost_changes, cost_total = _cost_from_energy_changes(changes, price)
 
       if cost_changes is not None:
