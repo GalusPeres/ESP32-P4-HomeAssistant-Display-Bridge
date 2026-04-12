@@ -23,6 +23,14 @@ try:
 except ImportError:  # pragma: no cover - older HA fallback
   state_changes_during_period = None
 try:
+  from homeassistant.components.recorder.statistics import statistics_during_period
+except ImportError:  # pragma: no cover - older HA fallback
+  statistics_during_period = None
+try:
+  from homeassistant.components.energy.data import async_get_manager as async_get_energy_manager
+except ImportError:  # pragma: no cover - energy component not available
+  async_get_energy_manager = None
+try:
   from homeassistant.components.weather import async_get_forecasts
 except Exception:  # pragma: no cover - optional weather helper
   async_get_forecasts = None
@@ -56,6 +64,8 @@ from .const import (
   DEFAULT_BASE,
   DEFAULT_PREFIX,
   DOMAIN,
+  ENERGY_REQUEST_SUFFIX,
+  ENERGY_RESPONSE_SUFFIX,
   HISTORY_REQUEST_SUFFIX,
   HISTORY_RESPONSE_SUFFIX,
   SERVICE_PUBLISH_SNAPSHOT,
@@ -266,6 +276,12 @@ class Tab5Bridge:
     self.weather_request_topic = (
       f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{WEATHER_REQUEST_SUFFIX}" if self.device_id else None
     )
+    self.energy_request_topic = (
+      f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{ENERGY_REQUEST_SUFFIX}" if self.device_id else None
+    )
+    self.energy_response_topic = (
+      f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{ENERGY_RESPONSE_SUFFIX}" if self.device_id else None
+    )
     self._unsub_state = None
     self._unsub_connected = None
     self._unsub_scene = None
@@ -274,6 +290,7 @@ class Tab5Bridge:
     self._unsub_request = None
     self._unsub_history = None
     self._unsub_weather = None
+    self._unsub_energy = None
     self._config_refresh_handles: List = []
     self._config_refresh_pending = 0
     self._icon_cache: Dict[str, str] = {}
@@ -404,6 +421,13 @@ class Tab5Bridge:
         self._async_handle_weather_request,
       )
       _LOGGER.debug("Tab5 subscribed to weather topic %s", self.weather_request_topic)
+    if self.energy_request_topic:
+      self._unsub_energy = await mqtt.async_subscribe(
+        self.hass,
+        self.energy_request_topic,
+        self._async_handle_energy_request,
+      )
+      _LOGGER.debug("Tab5 subscribed to energy topic %s", self.energy_request_topic)
     self._schedule_config_refresh()
 
   async def async_unload(self) -> None:
@@ -432,6 +456,9 @@ class Tab5Bridge:
     if self._unsub_weather:
       self._unsub_weather()
       self._unsub_weather = None
+    if self._unsub_energy:
+      self._unsub_energy()
+      self._unsub_energy = None
     if self._config_refresh_handles:
       for unsub in self._config_refresh_handles:
         unsub()
@@ -653,6 +680,240 @@ class Tab5Bridge:
       qos=0,
       retain=False,
     )
+
+  async def _async_handle_energy_request(self, msg: ReceiveMessage) -> None:
+    """Handle energy statistics requests from the Tab5 display."""
+    if not self.energy_response_topic:
+      return
+
+    parsed = _try_parse_json(msg.payload)
+    if not isinstance(parsed, dict):
+      parsed = {}
+
+    period = str(parsed.get("period") or "day").strip().lower()
+    if period not in {"day", "week", "month"}:
+      period = "day"
+
+    if async_get_energy_manager is None:
+      _LOGGER.warning("Tab5 energy request ignored (energy component not available)")
+      return
+    if statistics_during_period is None:
+      _LOGGER.warning("Tab5 energy request ignored (statistics_during_period not available)")
+      return
+
+    try:
+      manager = await async_get_energy_manager(self.hass)
+    except Exception:
+      _LOGGER.exception("Tab5 failed to load energy manager")
+      return
+    prefs = manager.data
+    if not prefs:
+      _LOGGER.warning("Tab5 energy request ignored (no energy preferences configured)")
+      return
+
+    sources = prefs.get("energy_sources") or []
+    if not sources:
+      _LOGGER.warning("Tab5 energy request ignored (no energy sources configured)")
+      return
+
+    # Build list of statistic IDs grouped by category with sign and price info.
+    entries: list[dict[str, Any]] = []
+    for source in sources:
+      src_type = source.get("type")
+      if src_type == "solar":
+        stat_id = source.get("stat_energy_from")
+        if stat_id:
+          entries.append({"stat_id": stat_id, "category": "solar", "sign": 1})
+
+      elif src_type == "grid":
+        # New unified grid format
+        if "stat_energy_from" in source:
+          stat_id = source.get("stat_energy_from")
+          if stat_id:
+            price = source.get("number_energy_price")
+            price_entity = source.get("entity_energy_price")
+            stat_cost = source.get("stat_cost")
+            entries.append({
+              "stat_id": stat_id, "category": "grid", "sign": 1,
+              "price": price, "price_entity": price_entity, "stat_cost": stat_cost,
+            })
+          stat_id_to = source.get("stat_energy_to")
+          if stat_id_to:
+            price_export = source.get("number_energy_price_export")
+            price_entity_export = source.get("entity_energy_price_export")
+            stat_compensation = source.get("stat_compensation")
+            entries.append({
+              "stat_id": stat_id_to, "category": "grid", "sign": -1,
+              "price": price_export, "price_entity": price_entity_export,
+              "stat_cost": stat_compensation,
+            })
+        # Legacy grid format with flow_from / flow_to
+        for flow in source.get("flow_from") or []:
+          stat_id = flow.get("stat_energy_from")
+          if not stat_id:
+            continue
+          price = flow.get("number_energy_price")
+          price_entity = flow.get("entity_energy_price")
+          stat_cost = flow.get("stat_cost")
+          entries.append({
+            "stat_id": stat_id, "category": "grid", "sign": 1,
+            "price": price, "price_entity": price_entity, "stat_cost": stat_cost,
+          })
+        for flow in source.get("flow_to") or []:
+          stat_id = flow.get("stat_energy_to")
+          if not stat_id:
+            continue
+          price = flow.get("number_energy_price")
+          price_entity = flow.get("entity_energy_price")
+          stat_compensation = flow.get("stat_compensation")
+          entries.append({
+            "stat_id": stat_id, "category": "grid", "sign": -1,
+            "price": price, "price_entity": price_entity,
+            "stat_cost": stat_compensation,
+          })
+
+      elif src_type == "battery":
+        stat_from = source.get("stat_energy_from")
+        stat_to = source.get("stat_energy_to")
+        if stat_from:
+          entries.append({"stat_id": stat_from, "category": "battery", "sign": 1})
+        if stat_to:
+          entries.append({"stat_id": stat_to, "category": "battery", "sign": -1})
+
+      elif src_type == "gas":
+        stat_id = source.get("stat_energy_from")
+        if stat_id:
+          price = source.get("number_energy_price")
+          price_entity = source.get("entity_energy_price")
+          stat_cost = source.get("stat_cost")
+          entries.append({
+            "stat_id": stat_id, "category": "gas", "sign": 1,
+            "price": price, "price_entity": price_entity, "stat_cost": stat_cost,
+          })
+
+    if not entries:
+      _LOGGER.warning("Tab5 energy request: no statistic IDs found in energy config")
+      return
+
+    all_stat_ids = {e["stat_id"] for e in entries}
+    # Also fetch cost statistic IDs
+    cost_stat_ids: set[str] = set()
+    for e in entries:
+      if e.get("stat_cost"):
+        cost_stat_ids.add(e["stat_cost"])
+        all_stat_ids.add(e["stat_cost"])
+
+    # Determine time range
+    now = dt_util.now()
+    if period == "day":
+      start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+      stat_period = "hour"
+    elif period == "week":
+      start = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+      stat_period = "day"
+    else:  # month
+      start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+      stat_period = "day"
+    start_utc = dt_util.as_utc(start)
+    end_utc = dt_util.as_utc(now)
+
+    def _fetch_energy_statistics() -> dict[str, list[dict[str, Any]]]:
+      return statistics_during_period(
+        self.hass,
+        start_utc,
+        end_utc,
+        all_stat_ids,
+        stat_period,
+        None,
+        {"change", "sum"},
+      )
+
+    try:
+      stats = await get_instance(self.hass).async_add_executor_job(
+        _fetch_energy_statistics
+      )
+    except Exception:
+      _LOGGER.exception("Tab5 energy: failed to fetch statistics")
+      stats = {}
+
+    # Resolve price from entity if needed
+    def _resolve_price(entry: dict[str, Any]) -> float | None:
+      price = entry.get("price")
+      if isinstance(price, (int, float)):
+        return float(price)
+      price_entity = entry.get("price_entity")
+      if price_entity:
+        state = self.hass.states.get(price_entity)
+        if state:
+          try:
+            return float(state.state)
+          except (TypeError, ValueError):
+            pass
+      return None
+
+    # Build response per entry
+    result_entries: list[dict[str, Any]] = []
+    for entry in entries:
+      stat_id = entry["stat_id"]
+      stat_data = stats.get(stat_id, [])
+      changes: list[float | None] = []
+      total = 0.0
+      for row in stat_data:
+        change = row.get("change")
+        if change is not None:
+          changes.append(round(change, 3))
+          total += change
+        else:
+          changes.append(None)
+
+      # Apply sign to total
+      signed_total = round(total * entry["sign"], 3)
+
+      # Resolve name from entity state
+      state = self.hass.states.get(stat_id)
+      name = state.attributes.get("friendly_name") if state else None
+      unit = state.attributes.get("unit_of_measurement") if state else None
+
+      result_entry: dict[str, Any] = {
+        "id": stat_id,
+        "category": entry["category"],
+        "sign": entry["sign"],
+        "values": changes,
+        "total": signed_total,
+      }
+      if name:
+        result_entry["name"] = name
+      if unit:
+        result_entry["unit"] = unit
+
+      # Resolve cost: prefer stat_cost, then calculate from price
+      price = _resolve_price(entry)
+      cost_stat = entry.get("stat_cost")
+      if cost_stat and cost_stat in stats:
+        cost_data = stats[cost_stat]
+        cost_total = sum(row.get("change") or 0.0 for row in cost_data)
+        result_entry["cost"] = round(cost_total, 2)
+      elif price is not None:
+        result_entry["cost"] = round(total * price * entry["sign"], 2)
+        result_entry["price"] = price
+
+      result_entries.append(result_entry)
+
+    response: dict[str, Any] = {
+      "period": period,
+      "stat_period": stat_period,
+      "start": start.isoformat(),
+      "entries": result_entries,
+    }
+
+    await mqtt.async_publish(
+      self.hass,
+      self.energy_response_topic,
+      json.dumps(response, separators=(",", ":")),
+      qos=0,
+      retain=False,
+    )
+    _LOGGER.debug("Tab5 energy response: %d entries, period=%s", len(result_entries), period)
 
   async def _async_handle_weather_request(self, msg: ReceiveMessage) -> None:
     """Handle explicit weather refresh requests from the Tab5 popup."""
