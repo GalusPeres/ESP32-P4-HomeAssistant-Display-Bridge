@@ -100,7 +100,7 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
   async def async_step_init(self, user_input: Dict[str, Any] | None = None):
     return self.async_show_menu(
       step_id="init",
-      menu_options=["panel", "entities"],
+      menu_options=["panel", "entities", "energy"],
     )
 
   # ---- Section 1: Panel settings ----
@@ -149,26 +149,12 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         errors["base"] = err.args[0]
       else:
         self.hass.config_entries.async_update_entry(self.config_entry, data=updated)
-        # Sync energy checkboxes to all other entries
-        for entry in self.hass.config_entries.async_entries(DOMAIN):
-          if entry.entry_id == self.config_entry.entry_id:
-            continue
-          other = dict(entry.data or {})
-          other[CONF_ENERGY_ELECTRICITY] = updated[CONF_ENERGY_ELECTRICITY]
-          other[CONF_ENERGY_GAS] = updated[CONF_ENERGY_GAS]
-          other[CONF_ENERGY_WATER] = updated[CONF_ENERGY_WATER]
-          self.hass.config_entries.async_update_entry(entry, data=other)
         return self.async_create_entry(title="", data={})
 
     merged = _merge_all_entities(self.hass, current)
-    # Use energy checkbox from any entry (they are synced)
-    energy_defaults = _merge_energy_checkboxes(self.hass, current)
     return self.async_show_form(
       step_id="entities",
       data_schema=vol.Schema({
-        vol.Optional(CONF_ENERGY_ELECTRICITY, default=energy_defaults.get(CONF_ENERGY_ELECTRICITY, False)): bool,
-        vol.Optional(CONF_ENERGY_GAS, default=energy_defaults.get(CONF_ENERGY_GAS, False)): bool,
-        vol.Optional(CONF_ENERGY_WATER, default=energy_defaults.get(CONF_ENERGY_WATER, False)): bool,
         vol.Optional(CONF_SENSORS, default=merged.get(CONF_SENSORS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(multiple=True)
         ),
@@ -189,6 +175,38 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         ),
       }),
       errors=errors,
+    )
+
+  # ---- Section 3: Energy Dashboard ----
+
+  async def async_step_energy(self, user_input: Dict[str, Any] | None = None):
+    current = dict(self.config_entry.data)
+
+    if user_input is not None:
+      updated = dict(current)
+      updated[CONF_ENERGY_ELECTRICITY] = bool(user_input.get(CONF_ENERGY_ELECTRICITY, False))
+      updated[CONF_ENERGY_GAS] = bool(user_input.get(CONF_ENERGY_GAS, False))
+      updated[CONF_ENERGY_WATER] = bool(user_input.get(CONF_ENERGY_WATER, False))
+      self.hass.config_entries.async_update_entry(self.config_entry, data=updated)
+      # Sync to all other entries
+      for entry in self.hass.config_entries.async_entries(DOMAIN):
+        if entry.entry_id == self.config_entry.entry_id:
+          continue
+        other = dict(entry.data or {})
+        other[CONF_ENERGY_ELECTRICITY] = updated[CONF_ENERGY_ELECTRICITY]
+        other[CONF_ENERGY_GAS] = updated[CONF_ENERGY_GAS]
+        other[CONF_ENERGY_WATER] = updated[CONF_ENERGY_WATER]
+        self.hass.config_entries.async_update_entry(entry, data=other)
+      return self.async_create_entry(title="", data={})
+
+    defaults = _merge_energy_checkboxes(self.hass, current)
+    return self.async_show_form(
+      step_id="energy",
+      data_schema=vol.Schema({
+        vol.Optional(CONF_ENERGY_ELECTRICITY, default=defaults.get(CONF_ENERGY_ELECTRICITY, False)): bool,
+        vol.Optional(CONF_ENERGY_GAS, default=defaults.get(CONF_ENERGY_GAS, False)): bool,
+        vol.Optional(CONF_ENERGY_WATER, default=defaults.get(CONF_ENERGY_WATER, False)): bool,
+      }),
     )
 
 
@@ -275,9 +293,7 @@ def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) ->
 
   updated = dict(current)
   updated.pop("energy_enabled", None)  # remove old single checkbox
-  updated[CONF_ENERGY_ELECTRICITY] = bool(user_input.get(CONF_ENERGY_ELECTRICITY, False))
-  updated[CONF_ENERGY_GAS] = bool(user_input.get(CONF_ENERGY_GAS, False))
-  updated[CONF_ENERGY_WATER] = bool(user_input.get(CONF_ENERGY_WATER, False))
+  updated.pop("energy_enabled", None)  # remove old single checkbox
   updated[CONF_SENSORS] = sensors
   updated[CONF_WEATHERS] = weathers
   updated[CONF_LIGHTS] = lights

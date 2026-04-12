@@ -22,7 +22,8 @@
       "init": {
         "menu_options": {
           "panel": "Panel settings",
-          "entities": "Entity configuration"
+          "entities": "Entity configuration",
+          "energy": "Energy Dashboard"
         }
       },
       "panel": {
@@ -39,15 +40,21 @@
         "title": "Entity configuration",
         "description": "Applies to all panels. Changes here affect every connected device.",
         "data": {
-          "energy_electricity": "Energy: Electricity",
-          "energy_gas": "Energy: Gas",
-          "energy_water": "Energy: Water",
           "sensors": "Sensors",
           "weathers": "Weather",
           "lights": "Lights",
           "switches": "Switches",
           "scene_entities": "Scenes / Scripts",
           "scene_map_text": "Scene / Script aliases"
+        }
+      },
+      "energy": {
+        "title": "Energy Dashboard",
+        "description": "Send data from the Home Assistant Energy Dashboard to devices.",
+        "data": {
+          "energy_electricity": "Electricity",
+          "energy_gas": "Gas",
+          "energy_water": "Water"
         }
       }
     },
