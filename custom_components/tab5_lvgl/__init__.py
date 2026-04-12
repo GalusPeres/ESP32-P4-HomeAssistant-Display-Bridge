@@ -849,6 +849,8 @@ class Tab5Bridge:
       _LOGGER.exception("Tab5 energy: failed to fetch statistics")
       stats = {}
 
+    currency = self.hass.config.currency or "EUR"
+
     # Build response per entry
     result_entries: list[dict[str, Any]] = []
     for entry in entries:
@@ -903,11 +905,11 @@ class Tab5Bridge:
           "sign": entry["sign"],
           "values": cost_changes,
           "total": round(cost_total, 2),
-          "unit": "€",
+          "unit": currency,
           "is_cost": True,
         }
         if name:
-          cost_entry["name"] = f"{name} (€)"
+          cost_entry["name"] = f"{name} ({currency})"
         result_entries.append(cost_entry)
 
     # Build total entries per category with multiple members
@@ -953,13 +955,13 @@ class Tab5Bridge:
           "id": f"{cat}_total" + ("_cost" if is_cost else ""),
           "category": cat,
           "sign": 1,
-          "name": f"{base_name} (€)" if is_cost else base_name,
+          "name": f"{base_name} ({currency})" if is_cost else base_name,
           "values": sum_values,
           "total": total_sum,
           "is_total": True,
         }
         if is_cost:
-          total_entry["unit"] = "€"
+          total_entry["unit"] = currency
           total_entry["is_cost"] = True
         elif members[0].get("unit"):
           total_entry["unit"] = members[0]["unit"]
@@ -1445,6 +1447,7 @@ class Tab5Bridge:
 
   async def _build_energy_meta(self, categories: set[str] | None = None) -> List[Dict[str, Any]]:
     """Build energy source list from HA Energy Dashboard config."""
+    currency = self.hass.config.currency or "EUR"
     if async_get_energy_manager is None:
       return []
     try:
@@ -1586,8 +1589,8 @@ class Tab5Bridge:
           "id": f"{e['id']}_cost",
           "category": e["category"],
           "sign": e["sign"],
-          "name": f"{e.get('name', e['id'])} (€)",
-          "unit": "€",
+          "name": f"{e.get('name', e['id'])} ({currency})",
+          "unit": currency,
           "is_cost": True,
         })
     entries.extend(cost_meta)
@@ -1616,11 +1619,11 @@ class Tab5Bridge:
           "id": f"{cat}_total" + ("_cost" if is_cost else ""),
           "category": cat,
           "sign": 1,
-          "name": f"{base_name} (€)" if is_cost else base_name,
+          "name": f"{base_name} ({currency})" if is_cost else base_name,
           "is_total": True,
         }
         if is_cost:
-          total_entry["unit"] = "€"
+          total_entry["unit"] = currency
           total_entry["is_cost"] = True
         elif members[0].get("unit"):
           total_entry["unit"] = members[0]["unit"]
