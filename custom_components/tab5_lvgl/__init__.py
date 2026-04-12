@@ -728,6 +728,12 @@ class Tab5Bridge:
     devices = prefs.get("device_consumption") or []
     devices_water = prefs.get("device_consumption_water") or []
 
+    def _price_fields(config: dict[str, Any]) -> dict[str, Any]:
+      return {
+        "price_entity": config.get("entity_energy_price"),
+        "number_energy_price": config.get("number_energy_price"),
+      }
+
     # Build list of statistic IDs grouped by category with sign.
     entries: list[dict[str, Any]] = []
     for source in sources:
@@ -744,12 +750,14 @@ class Tab5Bridge:
             entries.append({
               "stat_id": stat_id, "category": "grid", "sign": 1,
               "stat_cost": source.get("stat_cost"),
+              **_price_fields(source),
             })
           stat_id_to = source.get("stat_energy_to")
           if stat_id_to:
             entries.append({
               "stat_id": stat_id_to, "category": "grid", "sign": -1,
               "stat_cost": source.get("stat_compensation"),
+              **_price_fields(source),
             })
         for flow in source.get("flow_from") or []:
           stat_id = flow.get("stat_energy_from")
@@ -757,6 +765,7 @@ class Tab5Bridge:
             entries.append({
               "stat_id": stat_id, "category": "grid", "sign": 1,
               "stat_cost": flow.get("stat_cost"),
+              **_price_fields(flow),
             })
         for flow in source.get("flow_to") or []:
           stat_id = flow.get("stat_energy_to")
@@ -764,6 +773,7 @@ class Tab5Bridge:
             entries.append({
               "stat_id": stat_id, "category": "grid", "sign": -1,
               "stat_cost": flow.get("stat_compensation"),
+              **_price_fields(flow),
             })
 
       elif src_type == "battery":
@@ -778,6 +788,7 @@ class Tab5Bridge:
           entries.append({
             "stat_id": stat_id, "category": "gas", "sign": 1,
             "stat_cost": source.get("stat_cost"),
+            **_price_fields(source),
           })
 
       elif src_type == "water":
@@ -786,6 +797,7 @@ class Tab5Bridge:
           entries.append({
             "stat_id": stat_id, "category": "water", "sign": 1,
             "stat_cost": source.get("stat_cost"),
+            **_price_fields(source),
           })
 
     for dev in devices:
@@ -854,6 +866,10 @@ class Tab5Bridge:
     def _as_float(value: Any) -> float | None:
       if value is None:
         return None
+      if isinstance(value, str):
+        value = value.strip().replace(",", ".")
+        if not value:
+          return None
       try:
         return float(value)
       except (TypeError, ValueError):
@@ -892,6 +908,37 @@ class Tab5Bridge:
 
       return changes, total
 
+    def _price_for_entry(entry: dict[str, Any]) -> float | None:
+      fixed_price = _as_float(entry.get("number_energy_price"))
+      if fixed_price is not None:
+        return fixed_price
+
+      price_entity = entry.get("price_entity")
+      if not isinstance(price_entity, str) or not price_entity.strip():
+        return None
+      state = self.hass.states.get(price_entity.strip())
+      if not state:
+        return None
+      return _as_float(state.state)
+
+    def _cost_from_energy_changes(
+      changes: list[float | None], price: float
+    ) -> tuple[list[float | None], float]:
+      cost_changes: list[float | None] = []
+      cost_total = 0.0
+
+      for change in changes:
+        if change is None:
+          cost_changes.append(None)
+          continue
+        cost = abs(change) * price
+        if abs(cost) < 1e-9:
+          cost = 0.0
+        cost_changes.append(round(cost, 4))
+        cost_total += cost
+
+      return cost_changes, cost_total
+
     # Build response per entry
     result_entries: list[dict[str, Any]] = []
     for entry in entries:
@@ -922,8 +969,15 @@ class Tab5Bridge:
 
       # Create separate cost entry if cost data exists
       cost_stat = entry.get("stat_cost")
+      cost_changes: list[float | None] | None = None
+      cost_total = 0.0
+
       if cost_stat and cost_stat in stats:
         cost_changes, cost_total = _changes_from_statistics(stats[cost_stat], 4)
+      elif (price := _price_for_entry(entry)) is not None:
+        cost_changes, cost_total = _cost_from_energy_changes(changes, price)
+
+      if cost_changes is not None:
         cost_entry: dict[str, Any] = {
           "id": f"{stat_id}_cost",
           "category": entry["category"],
@@ -1071,7 +1125,18 @@ class Tab5Bridge:
       qos=0,
       retain=False,
     )
-    _LOGGER.debug("Tab5 energy response: %d entries, period=%s", len(result_entries), period)
+    cost_entries_count = sum(1 for e in result_entries if e.get("is_cost"))
+    cost_entries_with_values = sum(
+      1 for e in result_entries
+      if e.get("is_cost") and any(v is not None for v in e.get("values", []))
+    )
+    _LOGGER.warning(
+      "Tab5 energy response: period=%s entries=%d cost_entries=%d cost_entries_with_values=%d",
+      period,
+      len(result_entries),
+      cost_entries_count,
+      cost_entries_with_values,
+    )
 
   async def _async_handle_weather_request(self, msg: ReceiveMessage) -> None:
     """Handle explicit weather refresh requests from the Tab5 popup."""
@@ -1550,6 +1615,14 @@ class Tab5Bridge:
     devices = prefs.get("device_consumption") or []
     devices_water = prefs.get("device_consumption_water") or []
     entries: List[Dict[str, Any]] = []
+
+    def _has_cost_config(config: dict[str, Any], cost_key: str) -> bool:
+      return bool(
+        config.get(cost_key)
+        or config.get("entity_energy_price")
+        or config.get("number_energy_price") is not None
+      )
+
     for source in sources:
       src_type = source.get("type")
       if src_type == "solar":
@@ -1569,6 +1642,7 @@ class Tab5Bridge:
           if stat_id:
             state = self.hass.states.get(stat_id)
             entry = {"id": stat_id, "category": "grid", "sign": 1}
+            entry["_has_cost"] = _has_cost_config(source, "stat_cost")
             if state and state.attributes.get("friendly_name"):
               entry["name"] = state.attributes["friendly_name"]
             if state and state.attributes.get("unit_of_measurement"):
@@ -1578,6 +1652,7 @@ class Tab5Bridge:
           if stat_id_to:
             state = self.hass.states.get(stat_id_to)
             entry = {"id": stat_id_to, "category": "grid", "sign": -1}
+            entry["_has_cost"] = _has_cost_config(source, "stat_compensation")
             if state and state.attributes.get("friendly_name"):
               entry["name"] = state.attributes["friendly_name"]
             if state and state.attributes.get("unit_of_measurement"):
@@ -1589,6 +1664,7 @@ class Tab5Bridge:
             continue
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "grid", "sign": 1}
+          entry["_has_cost"] = _has_cost_config(flow, "stat_cost")
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
@@ -1600,6 +1676,7 @@ class Tab5Bridge:
             continue
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "grid", "sign": -1}
+          entry["_has_cost"] = _has_cost_config(flow, "stat_compensation")
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
@@ -1624,6 +1701,7 @@ class Tab5Bridge:
         if stat_id:
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "gas", "sign": 1}
+          entry["_has_cost"] = _has_cost_config(source, "stat_cost")
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
@@ -1635,6 +1713,7 @@ class Tab5Bridge:
         if stat_id:
           state = self.hass.states.get(stat_id)
           entry = {"id": stat_id, "category": "water", "sign": 1}
+          entry["_has_cost"] = _has_cost_config(source, "stat_cost")
           if state and state.attributes.get("friendly_name"):
             entry["name"] = state.attributes["friendly_name"]
           if state and state.attributes.get("unit_of_measurement"):
@@ -1673,7 +1752,7 @@ class Tab5Bridge:
     cost_cats = {"grid", "gas", "water"}
     cost_meta: List[Dict[str, Any]] = []
     for e in entries:
-      if e["category"] in cost_cats:
+      if e["category"] in cost_cats and e.get("_has_cost"):
         cost_meta.append({
           "id": f"{e['id']}_cost",
           "category": e["category"],
@@ -1717,6 +1796,9 @@ class Tab5Bridge:
         elif members[0].get("unit"):
           total_entry["unit"] = members[0]["unit"]
         entries.append(total_entry)
+
+    for e in entries:
+      e.pop("_has_cost", None)
 
     # Add Gesamtverbrauch and Nicht erfasster Verbrauch meta
     electricity_cats = {"solar", "grid", "battery"}
