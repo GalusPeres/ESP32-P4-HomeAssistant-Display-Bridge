@@ -491,11 +491,11 @@ class Tab5Bridge:
         "scene_map": self.scene_map,
     }
     energy_cats = set()
-    if self.config_entry.data.get(CONF_ENERGY_ELECTRICITY):
+    if self.entry.data.get(CONF_ENERGY_ELECTRICITY):
       energy_cats.update({"solar", "grid", "battery", "device"})
-    if self.config_entry.data.get(CONF_ENERGY_GAS):
+    if self.entry.data.get(CONF_ENERGY_GAS):
       energy_cats.add("gas")
-    if self.config_entry.data.get(CONF_ENERGY_WATER):
+    if self.entry.data.get(CONF_ENERGY_WATER):
       energy_cats.update({"water", "device_water"})
     if energy_cats:
       energy_entries = await self._build_energy_meta(energy_cats)
