@@ -716,9 +716,8 @@ class Tab5Bridge:
       return
 
     sources = prefs.get("energy_sources") or []
-    if not sources:
-      _LOGGER.warning("Tab5 energy request ignored (no energy sources configured)")
-      return
+    devices = prefs.get("device_consumption") or []
+    devices_water = prefs.get("device_consumption_water") or []
 
     # Build list of statistic IDs grouped by category with sign.
     entries: list[dict[str, Any]] = []
@@ -730,7 +729,6 @@ class Tab5Bridge:
           entries.append({"stat_id": stat_id, "category": "solar", "sign": 1})
 
       elif src_type == "grid":
-        # New unified grid format
         if "stat_energy_from" in source:
           stat_id = source.get("stat_energy_from")
           if stat_id:
@@ -744,7 +742,6 @@ class Tab5Bridge:
               "stat_id": stat_id_to, "category": "grid", "sign": -1,
               "stat_cost": source.get("stat_compensation"),
             })
-        # Legacy grid format with flow_from / flow_to
         for flow in source.get("flow_from") or []:
           stat_id = flow.get("stat_energy_from")
           if stat_id:
@@ -773,6 +770,30 @@ class Tab5Bridge:
             "stat_id": stat_id, "category": "gas", "sign": 1,
             "stat_cost": source.get("stat_cost"),
           })
+
+      elif src_type == "water":
+        stat_id = source.get("stat_energy_from")
+        if stat_id:
+          entries.append({
+            "stat_id": stat_id, "category": "water", "sign": 1,
+            "stat_cost": source.get("stat_cost"),
+          })
+
+    for dev in devices:
+      stat_id = dev.get("stat_consumption")
+      if stat_id:
+        entries.append({
+          "stat_id": stat_id, "category": "device", "sign": 1,
+          "device_name": dev.get("name"),
+        })
+
+    for dev in devices_water:
+      stat_id = dev.get("stat_consumption")
+      if stat_id:
+        entries.append({
+          "stat_id": stat_id, "category": "device_water", "sign": 1,
+          "device_name": dev.get("name"),
+        })
 
     if not entries:
       _LOGGER.warning("Tab5 energy request: no statistic IDs found in energy config")
@@ -835,7 +856,9 @@ class Tab5Bridge:
           changes.append(None)
 
       state = self.hass.states.get(stat_id)
-      name = state.attributes.get("friendly_name") if state else None
+      name = entry.get("device_name") or (
+        state.attributes.get("friendly_name") if state else None
+      )
       unit = state.attributes.get("unit_of_measurement") if state else None
 
       result_entry: dict[str, Any] = {
@@ -852,8 +875,17 @@ class Tab5Bridge:
 
       cost_stat = entry.get("stat_cost")
       if cost_stat and cost_stat in stats:
-        cost_total = sum(row.get("change") or 0.0 for row in stats[cost_stat])
+        cost_changes: list[float | None] = []
+        cost_total = 0.0
+        for row in stats[cost_stat]:
+          c = row.get("change")
+          if c is not None:
+            cost_changes.append(round(c, 4))
+            cost_total += c
+          else:
+            cost_changes.append(None)
         result_entry["cost"] = round(cost_total, 2)
+        result_entry["cost_values"] = cost_changes
 
       result_entries.append(result_entry)
 
@@ -1346,6 +1378,8 @@ class Tab5Bridge:
     if not prefs:
       return []
     sources = prefs.get("energy_sources") or []
+    devices = prefs.get("device_consumption") or []
+    devices_water = prefs.get("device_consumption_water") or []
     entries: List[Dict[str, Any]] = []
     for source in sources:
       src_type = source.get("type")
@@ -1426,6 +1460,46 @@ class Tab5Bridge:
           if state and state.attributes.get("unit_of_measurement"):
             entry["unit"] = state.attributes["unit_of_measurement"]
           entries.append(entry)
+
+      elif src_type == "water":
+        stat_id = source.get("stat_energy_from")
+        if stat_id:
+          state = self.hass.states.get(stat_id)
+          entry = {"id": stat_id, "category": "water", "sign": 1}
+          if state and state.attributes.get("friendly_name"):
+            entry["name"] = state.attributes["friendly_name"]
+          if state and state.attributes.get("unit_of_measurement"):
+            entry["unit"] = state.attributes["unit_of_measurement"]
+          entries.append(entry)
+
+    for dev in devices:
+      stat_id = dev.get("stat_consumption")
+      if stat_id:
+        state = self.hass.states.get(stat_id)
+        entry = {"id": stat_id, "category": "device", "sign": 1}
+        name = dev.get("name") or (
+          state.attributes.get("friendly_name") if state else None
+        )
+        if name:
+          entry["name"] = name
+        if state and state.attributes.get("unit_of_measurement"):
+          entry["unit"] = state.attributes["unit_of_measurement"]
+        entries.append(entry)
+
+    for dev in devices_water:
+      stat_id = dev.get("stat_consumption")
+      if stat_id:
+        state = self.hass.states.get(stat_id)
+        entry = {"id": stat_id, "category": "device_water", "sign": 1}
+        name = dev.get("name") or (
+          state.attributes.get("friendly_name") if state else None
+        )
+        if name:
+          entry["name"] = name
+        if state and state.attributes.get("unit_of_measurement"):
+          entry["unit"] = state.attributes["unit_of_measurement"]
+        entries.append(entry)
+
     return entries
 
 
