@@ -1,215 +1,81 @@
-# Tab5 LVGL MQTT Bridge
+# ESP32-P4 HomeAssistant Display Bridge
 
-Home Assistant custom integration for Tab5 LVGL displays via MQTT.
+Home Assistant custom integration for the [ESP32-P4 HomeAssistant Display](https://github.com/GalusPeres/ESP32_P4_HomeAssistant_Display) project. Bridges Home Assistant entities, sensors, weather, energy data and more to ESP32-based LVGL displays via MQTT.
 
-## Features
+## About
 
-- MQTT-based communication with Tab5 LVGL displays
-- Automatic entity synchronization
-- Scene control
-- Sensor state publishing
-- Light and switch control
-- Auto-discovery support
+This integration is the Home Assistant companion for the **ESP32-P4 HomeAssistant Display** firmware. It handles:
+
+- Pushing entity states, metadata and icons to the display in real time
+- Sensor history for popup charts (24h / 5min buckets)
+- Weather forecasts (daily + hourly)
+- Energy dashboard data (consumption, solar, grid, battery, gas, water)
+- Light, switch and scene control from the display
+- Auto-discovery of integration-owned sensors (battery, temperature)
+
+**Firmware repository:** [ESP32_P4_HomeAssistant_Display](https://github.com/GalusPeres/ESP32_P4_HomeAssistant_Display)
 
 ## Installation
 
 ### Via HACS (Recommended)
 
 1. Add this repository as a custom repository in HACS:
-   - HACS → Integrations → ⋮ (top right) → Custom repositories
-   - Repository: `https://github.com/GalusPeres/ha-tab5-mqtt-bridge`
+   - HACS > Integrations > three-dot menu (top right) > Custom repositories
+   - Repository: `https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display-Bridge`
    - Category: Integration
    - Click "Add"
 
 2. Install the integration:
-   - HACS → Integrations → Search for "Tab5 LVGL"
+   - HACS > Integrations > Search for "LVGL MQTT Bridge"
    - Click "Download"
 
 3. Restart Home Assistant
 
 4. Add the integration:
-   - Settings → Devices & Services → Add Integration
-   - Search for "Tab5 LVGL"
+   - Settings > Devices & Services > Add Integration
+   - Search for "LVGL MQTT Bridge"
 
 ### Manual Installation
 
 1. Copy the `custom_components/tab5_lvgl` directory to your Home Assistant `custom_components` folder
 2. Restart Home Assistant
-3. Add the integration via Settings → Devices & Services
+3. Add the integration via Settings > Devices & Services
 
 ## Configuration
 
 Configure via the Home Assistant UI:
-- **Base Topic**: MQTT base topic (default: `tab5`)
-- **HA Prefix**: Home Assistant state stream prefix (default: `ha/statestream`)
-- **Sensors**: Entities to sync to the display
-- **Lights**: Lights to control from the display
-- **Switches**: Switches to control from the display
-- **Scenes**: Scenes controllable from the display
 
-## Light & Switch Commands
+- **Panel Settings** - MQTT base topic, HA prefix, device metadata
+- **Entity Configuration** - Sensors, weather, lights, switches, scenes
+- **Energy Dashboard** - Electricity, gas and water from the HA Energy Dashboard
 
-Tab5 can control entities by publishing to the command topics:
+## MQTT Topics
 
-- `base_topic/cmnd/light`
-- `base_topic/cmnd/switch`
+The integration communicates with the display firmware via MQTT:
 
-Payload formats:
-
-- JSON: `{"entity_id":"light.kitchen","state":"on","brightness":128}`
-- Simple: `light.kitchen on` or `on` (if only one entity is configured)
+| Topic | Direction | Description |
+|---|---|---|
+| `base_topic/stat/connected` | Display > HA | Connection status |
+| `tab5_lvgl/config/{id}/bridge/apply` | HA > Display | Full configuration push |
+| `tab5_lvgl/config/{id}/bridge/icons` | HA > Display | Lightweight icon updates |
+| `tab5_lvgl/config/{id}/history/*` | Bidirectional | Sensor history request/response |
+| `tab5_lvgl/config/{id}/weather/*` | Bidirectional | Weather forecast request/response |
+| `tab5_lvgl/config/{id}/energy/*` | Bidirectional | Energy data request/response |
+| `base_topic/cmnd/light` | Display > HA | Light control commands |
+| `base_topic/cmnd/switch` | Display > HA | Switch control commands |
+| `base_topic/cmnd/scene` | Display > HA | Scene activation |
 
 ## Requirements
 
 - Home Assistant 2025.11 or newer
 - MQTT broker configured in Home Assistant
-- Tab5 LVGL device with MQTT support
+- [ESP32-P4 HomeAssistant Display](https://github.com/GalusPeres/ESP32_P4_HomeAssistant_Display) firmware
 
 ## Release Process
 
 - Bump `custom_components/tab5_lvgl/manifest.json` version
 - Commit and push to `main`
-- Create and push a `v*` tag (example: `v0.2.46`)
-- GitHub Actions now auto-creates the matching GitHub Release for HACS
-
-## Changelog
-
-### 0.4.3 (2026-04-08)
-- Rebuild daily weather forecast entries from hourly data when providers return too few daily rows
-- Compact daily forecast payloads to keep weather updates smaller and more robust
-- Include compact hourly icon/condition markers for `0/6/12/18 Uhr`
-- Backfill older changelog entries in the README
-
-### 0.4.2 (2026-04-08)
-- Compact hourly weather payload to stay within MQTT message limits
-- Restore weather popup updates after extending hourly forecast support
-
-### 0.4.1 (2026-04-08)
-- Add dedicated weather request flow so popups can fetch fresh weather data on open
-- Extend hourly forecast payload support for detailed daily weather views
-
-### 0.4.0 (2026-04-08)
-- Add weather entities as their own category in the bridge configuration
-- Publish daily and hourly weather forecast data for the display
-- Merge hourly precipitation totals and probability maxima into daily forecast payloads
-
-### 0.3.9 (2026-04-08)
-- Add 7-day sensor history request support
-
-### 0.3.8 (2026-03-27)
-- Remove hardcoded Tab5 and M5Stack defaults for more generic device support
-
-### 0.3.7 (2026-03-23)
-- Add options menu separation for panel and entity configuration
-
-### 0.3.6 (2026-03-22)
-- Rename the integration to LVGL MQTT Bridge
-
-### 0.3.5 (2026-03-20)
-- Split the config flow into a device panel step and a separate entity/options step
-
-### 0.3.4 (2026-03-20)
-- Merge entities from all discovered hubs so one configuration can be shared everywhere
-
-### 0.3.3 (2026-03-20)
-- Always subscribe to light and switch commands
-- Accept any valid entity instead of overly strict filtering
-
-### 0.3.2 (2026-03-20)
-- Use a generic config flow title
-- Add `strings.json` for proper Home Assistant translations
-
-### 0.3.1 (2026-03-20)
-- Add manufacturer and model fields to the config flow form
-
-### 0.3.0 (2026-03-20)
-- Added multi-device support with dynamic device metadata
-
-### 0.2.45 (2026-02-10)
-- Simplify internal sensor labels
-
-### 0.2.44 (2026-02-10)
-- Auto-include all internal Tab5 sensor entities
-
-### 0.2.43 (2026-02-10)
-- Unify internal sensor naming
-- Migrate the battery entity ID
-
-### 0.2.42 (2026-02-10)
-- Fix sensor popup history bucket handling
-
-### 0.2.41 (2026-02-10)
-- Auto-include integration battery and external sensor entities in the Tab5 sensor list
-
-### 0.2.40 (2026-02-10)
-- Version bump for HACS update detection
-
-### 0.2.39 (2026-02-10)
-- Add an external temperature sensor entity
-
-### 0.2.38 (2026-02-10)
-- Release with plain SemVer tag to maximize HACS version detection compatibility
-
-### 0.2.37 (2026-02-10)
-- Version bump with `v` tag release for HACS compatibility refresh
-
-### 0.2.36 (2026-02-10)
-- Version bump for HACS update detection
-
-### 0.2.35 (2026-02-10)
-- Add native battery sensor entity (`sensor.tab5_batterie`) from `base_topic/sensor/soc_pct`
-- Publish live Tab5 battery SoC snapshot at MQTT connect and every telemetry cycle
-- Extend manifest metadata for HACS (`issue_tracker`, `integration_type`)
-
-### 0.2.11 (2025-12-22)
-- Use state history API for full 5-minute buckets
-
-### 0.2.10 (2025-12-22)
-- Use recorder state history for 24h/5min charts (288 points)
-
-### 0.2.9 (2025-12-22)
-- Fallback to state history for finer sensor history charts
-
-### 0.2.8 (2025-12-22)
-- Fix history stats query for newer Home Assistant recorder API
-
-### 0.2.7 (2025-12-22)
-- Added history request/response support for sensor popups (24h/5min aggregation)
-
-### 0.2.6 (2025-12-21)
-- Publish light brightness and supported modes in state updates
-
-### 0.2.5 (2025-12-19)
-- Publish light color in state updates for display/web UI
-
-### 0.2.4 (2025-12-19)
-- Added light and switch control support
-- Added light/switch entity metadata in MQTT config
-
-### 0.2.3 (2025-12-04)
-- Added debug logging for MQTT config payload
-- Investigating scene transmission issue
-
-### 0.2.2 (2025-12-04)
-- Second test release for HACS updates
-- Documentation improvements
-
-### 0.2.1 (2025-12-04)
-- Test release for HACS update mechanism
-- Minor improvements
-
-### 0.2.0 (2025-12-04)
-- Fixed compatibility with Home Assistant 2025.11 and 2025.12
-- Updated selector API to new format
-- Removed deprecated config_entry handling
-- Added MQTT as explicit dependency
-
-### 0.1.0
-- Initial release
-
-## Support
-
-For issues and feature requests, please use the [GitHub issue tracker](https://github.com/GalusPeres/ha-tab5-mqtt-bridge/issues).
+- Create a GitHub release with a `v*` tag (e.g. `v0.5.16`)
 
 ## License
 
