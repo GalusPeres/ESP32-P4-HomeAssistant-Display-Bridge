@@ -26,14 +26,14 @@ This integration is the Home Assistant companion for the **ESP32-P4 HomeAssistan
    - Click "Add"
 
 2. Install the integration:
-   - HACS > Integrations > Search for "LVGL MQTT Bridge"
+   - HACS > Integrations > Search for "ESP32-P4 HomeAssistant Display Bridge"
    - Click "Download"
 
 3. Restart Home Assistant
 
 4. Add the integration:
    - Settings > Devices & Services > Add Integration
-   - Search for "LVGL MQTT Bridge"
+   - Search for "ESP32-P4 HomeAssistant Display Bridge"
 
 ### Manual Installation
 
@@ -75,7 +75,7 @@ The integration communicates with the display firmware via MQTT:
 
 - Bump `custom_components/tab5_lvgl/manifest.json` version
 - Commit and push to `main`
-- Create a GitHub release with a `v*` tag (e.g. `v0.5.16`)
+- Create a GitHub release with a `v*` tag (e.g. `v0.5.18`)
 
 ## License
 
