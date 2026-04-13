@@ -270,6 +270,7 @@ class Tab5Bridge:
       for alias, entity in (data.get(CONF_SCENE_MAP, {}) or {}).items()
     }
     self.config_topic = f"{CONFIG_TOPIC_ROOT}/{self.device_id}/bridge/apply" if self.device_id else None
+    self.icons_topic = f"{CONFIG_TOPIC_ROOT}/{self.device_id}/bridge/icons" if self.device_id else None
     self.history_request_topic = (
       f"{CONFIG_TOPIC_ROOT}/{self.device_id}/{HISTORY_REQUEST_SUFFIX}" if self.device_id else None
     )
@@ -514,6 +515,7 @@ class Tab5Bridge:
       qos=1,
       retain=True,
     )
+    await self._async_publish_icon_update()
 
   async def async_publish_snapshot(self) -> None:
     """Push all configured entities to MQTT."""
@@ -1381,7 +1383,7 @@ class Tab5Bridge:
       self._config_refresh_handles.append(async_call_later(self.hass, delay, _refresh))
 
   def _schedule_icon_refresh(self, delay: float = 2.0) -> None:
-    if not self.config_topic:
+    if not self.icons_topic:
       return
     if self._icon_refresh_handle:
       return
@@ -1389,11 +1391,18 @@ class Tab5Bridge:
     def _refresh(_now) -> None:
       self._icon_refresh_handle = None
       asyncio.run_coroutine_threadsafe(
-        self.async_publish_config_to_device(),
+        self._async_publish_icon_update(),
         self.hass.loop,
       )
 
     self._icon_refresh_handle = async_call_later(self.hass, delay, _refresh)
+
+  async def _async_publish_icon_update(self) -> None:
+    """Publish only the icon map; lightweight, no full config push."""
+    if not self.icons_topic:
+      return
+    payload = json.dumps(self._icon_cache)
+    await mqtt.async_publish(self.hass, self.icons_topic, payload, qos=0, retain=False)
 
   async def _get_weather_forecast(
     self,
