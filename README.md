@@ -1,6 +1,6 @@
 # ESP32-P4 HomeAssistant Display Bridge
 
-Home Assistant custom integration for the [ESP32-P4 HomeAssistant Display](https://github.com/GalusPeres/ESP32_P4_HomeAssistant_Display) project. Bridges Home Assistant entities, sensors, weather, energy data and more to ESP32-based LVGL displays via MQTT.
+Home Assistant custom integration for the [ESP32-P4 HomeAssistant Display](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display) project. Bridges Home Assistant entities, sensors, weather, energy data and more to ESP32-based LVGL displays via MQTT.
 
 ## About
 
@@ -13,7 +13,7 @@ This integration is the Home Assistant companion for the **ESP32-P4 HomeAssistan
 - Light, switch and scene control from the display
 - Auto-discovery of integration-owned sensors (battery, temperature)
 
-**Firmware repository:** [ESP32_P4_HomeAssistant_Display](https://github.com/GalusPeres/ESP32_P4_HomeAssistant_Display)
+**Firmware repository:** [ESP32-P4-HomeAssistant-Display](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display)
 
 ## Installation
 
@@ -69,7 +69,7 @@ The integration communicates with the display firmware via MQTT:
 
 - Home Assistant 2025.11 or newer
 - MQTT broker configured in Home Assistant
-- [ESP32-P4 HomeAssistant Display](https://github.com/GalusPeres/ESP32_P4_HomeAssistant_Display) firmware
+- [ESP32-P4 HomeAssistant Display](https://github.com/GalusPeres/ESP32-P4-HomeAssistant-Display) firmware
 
 ## Release Process
 
