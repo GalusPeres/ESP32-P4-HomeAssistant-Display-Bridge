@@ -128,6 +128,36 @@ class BridgeSourceContractTest(unittest.TestCase):
         self.assertIn("entry_device_id", _called_names(handler))
         self.assertIn("is_stale_device_entry", _called_names(handler))
 
+    def test_runtime_sensor_feedback_is_filtered_and_upgrade_is_repaired(self) -> None:
+        setup = _find_function(self.tree, "async_setup_entry")
+        feedback = _find_function(self.tree, "_async_process_bridge_config")
+
+        self.assertIn(
+            "_cleanup_persisted_runtime_sensor_entities", _called_names(setup)
+        )
+        self.assertIn("_runtime_managed_sensor_entity_ids", _called_names(feedback))
+        self.assertIn("filter_runtime_sensor_entities", _called_names(feedback))
+        self.assertIn("clean_stored_sensor_selections", _called_names(feedback))
+        self.assertIn("should_import_feedback_selection", _called_names(feedback))
+
+        source = ast.get_source_segment(
+            BRIDGE_SOURCE.read_text(encoding="utf-8"), feedback
+        )
+        self.assertIsNotNone(source)
+        import_filter = source.rfind("filter_runtime_sensor_entities(")
+        source_import = source.rfind("SOURCE_IMPORT")
+        self.assertGreater(import_filter, 0)
+        self.assertGreater(source_import, import_filter)
+
+    def test_runtime_sensor_list_is_still_published_to_panels(self) -> None:
+        publisher = _find_function(self.tree, "async_publish_config_to_device")
+        source = ast.get_source_segment(
+            BRIDGE_SOURCE.read_text(encoding="utf-8"), publisher
+        )
+
+        self.assertIsNotNone(source)
+        self.assertIn('"sensors": self.sensors', source)
+
 
 if __name__ == "__main__":
     unittest.main()
