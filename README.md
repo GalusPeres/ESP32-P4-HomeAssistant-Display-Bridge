@@ -9,7 +9,7 @@ Home Assistant custom integration for the [HomeTiles](https://github.com/GalusPe
 This integration is the Home Assistant companion for the **HomeTiles** firmware. It handles:
 
 - Pushing entity states, metadata and icons to the display in real time
-- Numeric sensor history plus bounded binary-sensor timelines for 24 hours or 7 days
+- Numeric sensor graphs plus bounded binary and textual-state timelines for 24 hours or 7 days
 - Weather forecasts (daily + hourly)
 - Energy dashboard data (consumption, solar, grid, battery, gas, water)
 - Light, switch, cover, climate, media player and scene control from the display
@@ -66,7 +66,7 @@ The integration communicates with the display firmware via MQTT:
 | `tab5_lvgl/config/{id}/bridge` | Display > HA | Device announcement and local I/O discovery |
 | `tab5_lvgl/config/{id}/bridge/apply` | HA > Display | Full configuration push |
 | `tab5_lvgl/config/{id}/bridge/icons` | HA > Display | Lightweight icon updates |
-| `tab5_lvgl/config/{id}/history/*` | Bidirectional | Numeric and binary-sensor history request/response |
+| `tab5_lvgl/config/{id}/history/*` | Bidirectional | Numeric, binary-sensor and textual sensor-state history request/response |
 | `tab5_lvgl/config/{id}/weather/*` | Bidirectional | Weather forecast request/response |
 | `tab5_lvgl/config/{id}/energy/*` | Bidirectional | Energy data request/response |
 | `base_topic/cmnd/light` | Display > HA | Light control commands |
@@ -114,9 +114,56 @@ history uses a separate versioned mode and accepts only configured entities:
 be between 2 and 96. The response contains Unix-second `range_start`,
 `range_end` and `last_changed` values, the current state and device class, plus
 chronologically sorted `segments` (`start`, `end`, `state`) and `activity`
-(`timestamp`, `state`). Both arrays remain within the requested limit. `unknown` and
-`unavailable` are preserved. `history_available: false` distinguishes a
-Recorder failure from a successful query with no transitions.
+(`timestamp`, `state`). Both arrays remain within the requested limit. An
+additive `2bit-hex` timeline (`timeline_points`, `timeline_encoding`, and
+`timeline_data`) is built from paged Recorder state changes across the complete
+requested period, so a busy 7-day sensor is not reduced to only its newest 96
+changes. `timeline_complete` reports whether the bounded Recorder scan reached
+the end of the period. `unknown` and `unavailable` are preserved.
+`history_available: false` distinguishes a Recorder failure from a successful
+query with no transitions.
+
+Backward compatibility is part of the history contract. A request without a
+`kind` discriminator always uses the established numeric response shape,
+regardless of the entity's newly advertised `state_kind`. Binary responses keep
+their bounded `segments` and `activity` arrays; the compact timeline is additive.
+Likewise, `state_kind` only extends `sensor_meta` and does not replace its
+existing entity ID, unit, name, value or icon fields. Older firmware may omit the
+new request fields and ignore the new response and metadata fields safely.
+
+### Textual sensor-state protocol
+
+Each `sensor_meta` entry now adds `state_kind`, either `number` or `state`.
+Home Assistant sensor metadata is authoritative: numerical state classes and
+units remain on the established graph path, while enum, date, timestamp and
+other nonnumeric sensor states use the same History and Activity layout as a
+Binary Sensor. Older firmware safely ignores this additive metadata field.
+
+The retained live state topic remains a plain payload for backwards
+compatibility. Text is preserved exactly, including commas, underscores and
+Unicode; decimal-comma normalization is applied only when the sensor is proven
+numeric. History labels are limited to 32 UTF-8 bytes for the embedded payload;
+longer values receive a stable hash suffix so different states are not silently
+merged. The response's `current` value remains the trimmed HA state for display
+and live-state comparison and is independently bounded to 255 UTF-8 bytes.
+Textual history uses a separate request mode and accepts only a
+configured `sensor.*` entity:
+
+```json
+{"version":1,"kind":"state","entity_id":"sensor.next_collection_waste","hours":168,"max_transitions":96}
+```
+
+The response provides the same bounded range, current-state, segment and
+Activity fields as Binary Sensor history. Its 768-point timeline uses
+`timeline_encoding: "palette4-hex"`: each hexadecimal digit indexes one of at
+most 16 canonical, bounded state strings in `palette`. `unknown` and
+`unavailable` occupy the first two entries. `palette_complete: false` explicitly
+reports that more unique values existed than the embedded palette can represent;
+timeline cells for omitted values deliberately use the safe `unknown` color.
+The separate
+`timeline_complete` independently reports whether the bounded Recorder scan
+covered the full requested 24 hours or 7 days. Consecutive identical states are
+collapsed, so attribute-only updates do not create false Activity rows.
 
 Firmware may advertise local relays and temperature inputs in its device
 announcement. IDs must be unique per panel and stay stable across firmware

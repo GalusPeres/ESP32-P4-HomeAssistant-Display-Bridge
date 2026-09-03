@@ -79,8 +79,12 @@ class BinaryHistoryWiringTest(unittest.TestCase):
     self.assertIn("entity_id not in self.binary_sensors", source)
     self.assertIn('"entity_not_configured"', source)
     self.assertIn("history_available=history_available", source)
+    self.assertIn("history_complete=history_complete", source)
+    self.assertIn("BINARY_HISTORY_RECORDER_PAGE_SIZE", source)
+    self.assertIn("BINARY_HISTORY_RECORDER_MAX_CHANGES", source)
+    self.assertIn("while scanned_changes < BINARY_HISTORY_RECORDER_MAX_CHANGES", source)
+    self.assertIn("no_attributes=True", source)
     self.assertIn("recent_limit = request.max_transitions + 1", source)
-    self.assertIn("if len(recent_states) >= recent_limit", source)
 
     period_calls = [
       node
@@ -93,12 +97,14 @@ class BinaryHistoryWiringTest(unittest.TestCase):
     for call in period_calls:
       with self.subTest(call=ast.get_source_segment(self.source, call)):
         self.assertIn("limit", {keyword.arg for keyword in call.keywords})
-        self.assertEqual(ast.unparse(call.args[1]), "start")
-        self.assertEqual(ast.unparse(call.args[2]), "start")
+        self.assertIn("no_attributes", {keyword.arg for keyword in call.keywords})
+        self.assertIn("include_start_time_state", {keyword.arg for keyword in call.keywords})
+        self.assertEqual(ast.unparse(call.args[1]), "cursor")
+        self.assertEqual(ast.unparse(call.args[2]), "end")
         limit_keyword = next(
           keyword for keyword in call.keywords if keyword.arg == "limit"
         )
-        self.assertEqual(ast.unparse(limit_keyword.value), "1")
+        self.assertEqual(ast.unparse(limit_keyword.value), "page_limit")
 
     last_calls = [
       node
@@ -107,8 +113,32 @@ class BinaryHistoryWiringTest(unittest.TestCase):
       and isinstance(node.func, ast.Name)
       and node.func.id == "get_last_state_changes"
     ]
-    self.assertEqual(len(last_calls), 1)
-    self.assertEqual(ast.unparse(last_calls[0].args[1]), "recent_limit")
+    self.assertEqual(len(last_calls), 2)
+    legacy_fallback = next(
+      node
+      for node in ast.walk(handler)
+      if isinstance(node, ast.FunctionDef)
+      and node.name == "_fetch_recent_legacy_states"
+    )
+    recent_tail = next(
+      node
+      for node in ast.walk(handler)
+      if isinstance(node, ast.FunctionDef)
+      and node.name == "_fetch_recent_tail_states"
+    )
+    legacy_calls = [
+      call for call in last_calls if call in list(ast.walk(legacy_fallback))
+    ]
+    tail_calls = [
+      call for call in last_calls if call in list(ast.walk(recent_tail))
+    ]
+    self.assertEqual(len(legacy_calls), 1)
+    self.assertEqual(ast.unparse(legacy_calls[0].args[1]), "recent_limit")
+    self.assertEqual(len(tail_calls), 1)
+    self.assertEqual(
+      ast.unparse(tail_calls[0].args[1]),
+      "BINARY_HISTORY_RECORDER_RECENT_ROWS",
+    )
 
 
 if __name__ == "__main__":

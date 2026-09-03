@@ -64,6 +64,9 @@ from homeassistant.util import dt as dt_util, slugify
 
 from .binary_history import (
   BINARY_HISTORY_KIND,
+  BINARY_HISTORY_RECORDER_MAX_CHANGES,
+  BINARY_HISTORY_RECORDER_PAGE_SIZE,
+  BINARY_HISTORY_RECORDER_RECENT_ROWS,
   BinaryHistoryRequestError,
   build_binary_history_error,
   build_binary_history_response,
@@ -74,6 +77,17 @@ from .binary_sensor_helpers import (
   build_binary_sensor_state_payload,
   migrate_binary_sensor_config,
   split_binary_sensor_entities,
+)
+from .state_history import (
+  STATE_HISTORY_KIND,
+  STATE_HISTORY_MAX_RESPONSE_BYTES,
+  StateHistoryRequestError,
+  build_state_history_error,
+  build_state_history_response,
+  fetch_bounded_state_history,
+  parse_state_history_request,
+  sensor_live_state_payload,
+  sensor_state_kind,
 )
 from .const import (
   CONF_BASE_TOPIC,
@@ -1784,6 +1798,125 @@ class Tab5Bridge:
     await self.async_publish_config_to_device(force=force)
     await self.async_publish_snapshot()
 
+  async def _async_handle_state_history_request(
+    self, parsed: Dict[str, Any]
+  ) -> None:
+    """Handle bounded history for a configured textual sensor state."""
+    entity_id = str(parsed.get("entity_id") or "").strip()
+
+    async def _publish_error(code: str) -> None:
+      _LOGGER.warning(
+        "HomeTiles state history request failed for %s: %s",
+        entity_id or "<missing>",
+        code,
+      )
+      await mqtt.async_publish(
+        self.hass,
+        self.history_response_topic,
+        json.dumps(
+          build_state_history_error(entity_id, code),
+          separators=(",", ":"),
+        ),
+        qos=0,
+        retain=False,
+      )
+
+    try:
+      request = parse_state_history_request(parsed)
+    except StateHistoryRequestError as err:
+      await _publish_error(err.code)
+      return
+
+    if not entity_id:
+      await _publish_error("missing_entity_id")
+      return
+    if not entity_id.startswith("sensor."):
+      await _publish_error("invalid_entity_id")
+      return
+    if entity_id not in self.sensors:
+      await _publish_error("entity_not_configured")
+      return
+
+    end = dt_util.utcnow()
+    start = end - timedelta(hours=request.hours)
+    current_state = self.hass.states.get(entity_id)
+
+    def _fetch_state_history_states() -> Tuple[List[Any], bool, datetime]:
+      return fetch_bounded_state_history(
+        self.hass,
+        entity_id,
+        start,
+        end,
+        state_changes_during_period=state_changes_during_period,
+        get_last_state_changes=get_last_state_changes,
+        recent_limit=request.max_transitions + 1,
+      )
+
+    history_available = (
+      state_changes_during_period is not None
+      or get_last_state_changes is not None
+    )
+    history_complete = False
+    history_complete_until = start
+    try:
+      if history_available:
+        (
+          history_states,
+          history_complete,
+          history_complete_until,
+        ) = await get_instance(self.hass).async_add_executor_job(
+          _fetch_state_history_states
+        )
+      else:
+        history_states = []
+    except Exception:
+      _LOGGER.exception(
+        "HomeTiles state history Recorder query failed for %s", entity_id
+      )
+      history_states = []
+      history_available = False
+      history_complete = False
+      history_complete_until = start
+
+    response = build_state_history_response(
+      entity_id,
+      history_states,
+      current_state,
+      start,
+      end,
+      request.hours,
+      request.max_transitions,
+      history_available=history_available,
+      history_complete=history_complete,
+      history_complete_until=history_complete_until,
+    )
+    response_payload = json.dumps(
+      response,
+      ensure_ascii=False,
+      separators=(",", ":"),
+    )
+    response_bytes = len(response_payload.encode("utf-8"))
+    if response_bytes > STATE_HISTORY_MAX_RESPONSE_BYTES:
+      await _publish_error("response_too_large")
+      return
+
+    _LOGGER.debug(
+      "HomeTiles state history response for %s: %d segments, %d activity entries, %d palette entries, %d bytes, complete=%s",
+      entity_id,
+      len(response["segments"]),
+      len(response["activity"]),
+      len(response["palette"]),
+      response_bytes,
+      response["timeline_complete"],
+    )
+    await mqtt.async_publish(
+      self.hass,
+      self.history_response_topic,
+      response_payload,
+      qos=0,
+      retain=False,
+    )
+
   async def _async_handle_binary_history_request(
     self, parsed: Dict[str, Any]
   ) -> None:
@@ -1827,38 +1960,15 @@ class Tab5Bridge:
     start = end - timedelta(hours=request.hours)
     current_state = self.hass.states.get(entity_id)
 
-    def _fetch_binary_history_states() -> List[Any]:
+    def _state_change_time(state: Any) -> Optional[datetime]:
+      value = getattr(state, "last_updated", None)
+      if value is None:
+        value = getattr(state, "last_changed", None)
+      return value if isinstance(value, datetime) else None
+
+    def _fetch_recent_legacy_states() -> Tuple[List[Any], bool, datetime]:
       if get_last_state_changes is None:
-        return []
-
-      # Fetch one state at the left edge separately from the newest bounded
-      # changes. Home Assistant's period helper applies ``limit`` in ascending
-      # order, so using it for the full range would retain the oldest changes
-      # instead of the recent activity shown in the popup.
-      start_states: List[Any] = []
-      if state_changes_during_period is not None:
-        try:
-          start_history = state_changes_during_period(
-            self.hass,
-            start,
-            start,
-            entity_id,
-            include_start_time_state=True,
-            no_attributes=True,
-            limit=1,
-          )
-        except TypeError:
-          # Older unsupported recorder signatures must not trigger an
-          # unbounded compatibility query. The recent bounded query below can
-          # still provide useful history, with an unknown left edge.
-          _LOGGER.debug(
-            "Home Assistant recorder does not support a bounded binary-history start-state query"
-          )
-        else:
-          candidates = list(start_history.get(entity_id, [])) if start_history else []
-          if candidates:
-            start_states.append(candidates[0])
-
+        return [], False, start
       recent_limit = request.max_transitions + 1
       recent_history = get_last_state_changes(
         self.hass,
@@ -1867,22 +1977,119 @@ class Tab5Bridge:
       )
       recent_states = (
         list(recent_history.get(entity_id, [])) if recent_history else []
-      )
-      # Keep the in-memory contract bounded even if a future recorder helper
-      # accidentally returns more rows than requested. A full result slice may
-      # have omitted older rows between the separately fetched start state and
-      # the newest rows. Drop that isolated start state in this case so the
-      # response marks the unobserved prefix as unknown instead of inventing a
-      # continuous state across the gap.
-      recent_states = recent_states[-recent_limit:]
-      if len(recent_states) >= recent_limit:
-        start_states = []
-      return start_states + recent_states
+      )[-recent_limit:]
+      complete_until = start
+      for state in recent_states:
+        moment = _state_change_time(state)
+        if moment is not None and moment > complete_until:
+          complete_until = moment
+      return recent_states, False, complete_until
 
-    history_available = get_last_state_changes is not None
+    def _fetch_recent_tail_states() -> List[Any]:
+      if get_last_state_changes is None:
+        return []
+      recent_history = get_last_state_changes(
+        self.hass,
+        BINARY_HISTORY_RECORDER_RECENT_ROWS,
+        entity_id,
+      )
+      return (
+        list(recent_history.get(entity_id, []))
+        if recent_history
+        else []
+      )[-BINARY_HISTORY_RECORDER_RECENT_ROWS:]
+
+    def _fetch_binary_history_states() -> Tuple[List[Any], bool, datetime]:
+      if state_changes_during_period is None:
+        return _fetch_recent_legacy_states()
+
+      history_states: List[Any] = []
+      cursor = start
+      include_start_state = True
+      scanned_changes = 0
+      complete_until = start
+
+      while scanned_changes < BINARY_HISTORY_RECORDER_MAX_CHANGES:
+        page_limit = min(
+          BINARY_HISTORY_RECORDER_PAGE_SIZE,
+          BINARY_HISTORY_RECORDER_MAX_CHANGES - scanned_changes,
+        )
+        try:
+          page = state_changes_during_period(
+            self.hass,
+            cursor,
+            end,
+            entity_id,
+            include_start_time_state=include_start_state,
+            no_attributes=True,
+            limit=page_limit,
+          )
+        except TypeError:
+          # Compatibility fallback stays bounded for older Home Assistant
+          # recorder signatures that do not support paged queries.
+          if not history_states:
+            return _fetch_recent_legacy_states()
+          return (
+            history_states + _fetch_recent_tail_states(),
+            False,
+            complete_until,
+          )
+
+        candidate_limit = page_limit + (1 if include_start_state else 0)
+        candidates = (
+          list(page.get(entity_id, []))[:candidate_limit]
+          if page
+          else []
+        )
+        page_changes: List[Tuple[datetime, Any]] = []
+        if include_start_state:
+          for candidate in candidates:
+            moment = _state_change_time(candidate)
+            if moment is None or moment <= cursor:
+              history_states.append(candidate)
+              break
+        for candidate in candidates:
+          moment = _state_change_time(candidate)
+          if moment is not None and moment > cursor:
+            page_changes.append((moment, candidate))
+
+        if not page_changes:
+          return history_states, True, end
+        page_changes.sort(key=lambda item: item[0])
+        history_states.extend(candidate for _, candidate in page_changes)
+        scanned_changes += len(page_changes)
+        next_cursor = page_changes[-1][0]
+        if next_cursor <= cursor:
+          return (
+            history_states + _fetch_recent_tail_states(),
+            False,
+            complete_until,
+          )
+        cursor = next_cursor
+        complete_until = cursor
+        include_start_state = False
+        if len(page_changes) < page_limit:
+          return history_states, True, end
+
+      return (
+        history_states + _fetch_recent_tail_states(),
+        False,
+        complete_until,
+      )
+
+    history_available = (
+      state_changes_during_period is not None
+      or get_last_state_changes is not None
+    )
+    history_complete = False
+    history_complete_until = start
     try:
       if history_available:
-        history_states: List[Any] = await get_instance(
+        (
+          history_states,
+          history_complete,
+          history_complete_until,
+        ) = await get_instance(
           self.hass
         ).async_add_executor_job(_fetch_binary_history_states)
       else:
@@ -1893,6 +2100,8 @@ class Tab5Bridge:
       )
       history_states = []
       history_available = False
+      history_complete = False
+      history_complete_until = start
 
     response = build_binary_history_response(
       entity_id,
@@ -1903,12 +2112,15 @@ class Tab5Bridge:
       request.hours,
       request.max_transitions,
       history_available=history_available,
+      history_complete=history_complete,
+      history_complete_until=history_complete_until,
     )
     _LOGGER.debug(
-      "Tab5 binary history response for %s: %d segments, %d activity entries",
+      "Tab5 binary history response for %s: %d segments, %d activity entries, complete=%s",
       entity_id,
       len(response["segments"]),
       len(response["activity"]),
+      response["timeline_complete"],
     )
     await mqtt.async_publish(
       self.hass,
@@ -1928,7 +2140,11 @@ class Tab5Bridge:
       _LOGGER.warning("Tab5 history request ignored (invalid payload): %s", msg.payload)
       return
 
-    if str(parsed.get("kind") or "").strip().lower() == BINARY_HISTORY_KIND:
+    history_kind = str(parsed.get("kind") or "").strip().lower()
+    if history_kind == STATE_HISTORY_KIND:
+      await self._async_handle_state_history_request(parsed)
+      return
+    if history_kind == BINARY_HISTORY_KIND:
       await self._async_handle_binary_history_request(parsed)
       return
 
@@ -3257,6 +3473,8 @@ class Tab5Bridge:
       )
     if entity_id.startswith("media_player."):
       return json.dumps(_extract_media_player_payload(state, self.hass), default=str)
+    if entity_id.startswith("sensor."):
+      return sensor_live_state_payload(state)
     return state.state.replace(",", ".")
 
   async def _async_publish_weather_state(self, entity_id: str, state: State, retain: bool = True) -> None:
@@ -3313,10 +3531,10 @@ class Tab5Bridge:
     path = entity_id.replace(".", "/")
     return f"{self.ha_prefix}/{path}/{suffix}"
 
-  def _build_sensor_meta(self) -> List[Dict[str, str]]:
-    meta: List[Dict[str, str]] = []
+  def _build_sensor_meta(self) -> List[Dict[str, Any]]:
+    meta: List[Dict[str, Any]] = []
     for entity_id in self.sensors:
-      entry: Dict[str, str] = {"entity_id": entity_id}
+      entry: Dict[str, Any] = {"entity_id": entity_id}
       state: Optional[State] = self.hass.states.get(entity_id)
       if state:
         unit = state.attributes.get("unit_of_measurement")
@@ -3334,6 +3552,7 @@ class Tab5Bridge:
           entry["value"] = value.strip()
         if isinstance(icon, str) and icon.strip():
           entry["icon"] = icon.strip()
+        entry["state_kind"] = sensor_state_kind(state)
       meta.append(entry)
     return meta
 

@@ -15,7 +15,15 @@ BINARY_HISTORY_ALLOWED_HOURS = frozenset({24, 168})
 BINARY_HISTORY_DEFAULT_MAX_TRANSITIONS = 48
 BINARY_HISTORY_MIN_TRANSITIONS = 2
 BINARY_HISTORY_MAX_TRANSITIONS = 96
+BINARY_HISTORY_TIMELINE_POINTS = 768
+BINARY_HISTORY_TIMELINE_ENCODING = "2bit-hex"
+BINARY_HISTORY_RECORDER_PAGE_SIZE = 256
+BINARY_HISTORY_RECORDER_MAX_CHANGES = 8192
+BINARY_HISTORY_RECORDER_RECENT_ROWS = BINARY_HISTORY_MAX_TRANSITIONS * 4 + 1
 BINARY_HISTORY_STATES = frozenset({"on", "off", "unknown", "unavailable"})
+_BINARY_STATE_CODES = {"off": 0, "on": 1, "unknown": 2, "unavailable": 3}
+_BINARY_CODE_STATES = ("off", "on", "unknown", "unavailable")
+_BINARY_TIMELINE_PRIORITY = {"off": 1, "unknown": 2, "unavailable": 3, "on": 4}
 
 
 @dataclass(frozen=True)
@@ -86,13 +94,14 @@ def build_binary_history_response(
   hours: int,
   max_transitions: int,
   history_available: bool = True,
+  history_complete: bool = True,
+  history_complete_until: Any = None,
 ) -> dict[str, Any]:
   """Build bounded binary-state segments and activity from recorder states.
 
-  Segments cover the complete requested range. If the exact history exceeds
-  the requested limit, the oldest omitted interval becomes ``unknown`` and
-  the most recent exact segments are retained. This avoids inventing a state
-  while keeping the payload bounded for embedded consumers.
+  The compact timeline covers the complete requested range independently of
+  the bounded recent activity list. Short active intervals win their display
+  cell so presence is not lost when many transitions share one pixel.
   """
   start = _unix_seconds(range_start)
   end = _unix_seconds(range_end)
@@ -145,8 +154,69 @@ def build_binary_history_response(
     if state != previous_state:
       transitions.append((timestamp, state))
 
-  exact_segments = _segments_from_transitions(start, end, initial_state, transitions)
-  segments = _bound_segments(exact_segments, start, end, max_transitions)
+  timeline_transitions = list(transitions)
+  complete_until = _unix_seconds(history_complete_until)
+  if not history_complete:
+    if complete_until is None:
+      complete_until = transitions[-1][0] if transitions else start
+    complete_until = max(start, min(end, complete_until))
+    known_tail: list[tuple[int, str]] = []
+    for timestamp, _, state in records:
+      if timestamp <= complete_until or timestamp >= end:
+        continue
+      if not known_tail or known_tail[-1][1] != state:
+        known_tail.append((timestamp, state))
+    timeline_transitions = [
+      transition
+      for transition in timeline_transitions
+      if transition[0] <= complete_until
+    ]
+    state_at_cutoff = (
+      timeline_transitions[-1][1] if timeline_transitions else initial_state
+    )
+    current_value = (
+      _normalise_binary_state(_state_value(current_state))
+      if current_state is not None
+      else None
+    )
+    current_continues_from_cutoff = (
+      current_value is not None
+      and current_timestamp is not None
+      and current_timestamp <= complete_until
+      and current_value == state_at_cutoff
+    )
+    if complete_until < end and not current_continues_from_cutoff:
+      if state_at_cutoff != "unknown":
+        timeline_transitions.append((complete_until, "unknown"))
+      for timestamp, state in known_tail:
+        if timestamp >= end:
+          continue
+        if not timeline_transitions or timeline_transitions[-1][1] != state:
+          timeline_transitions.append((timestamp, state))
+      if (
+        current_value is not None
+        and current_timestamp is not None
+        and complete_until <= current_timestamp < end
+        and (
+          not timeline_transitions
+          or timeline_transitions[-1][1] != current_value
+        )
+      ):
+        timeline_transitions.append((current_timestamp, current_value))
+
+  exact_segments = _segments_from_transitions(
+    start, end, initial_state, timeline_transitions
+  )
+  timeline_codes = _timeline_codes_from_segments(
+    exact_segments, start, end, BINARY_HISTORY_TIMELINE_POINTS
+  )
+  segments = _bound_segments(
+    exact_segments,
+    start,
+    end,
+    max_transitions,
+    timeline_codes,
+  )
   activity = [
     {"timestamp": timestamp, "state": state}
     for timestamp, state in transitions[-max_transitions:]
@@ -172,6 +242,10 @@ def build_binary_history_response(
     "available": available,
     "device_class": _normalise_device_class(attributes.get("device_class")),
     "last_changed": current_timestamp,
+    "timeline_points": BINARY_HISTORY_TIMELINE_POINTS,
+    "timeline_encoding": BINARY_HISTORY_TIMELINE_ENCODING,
+    "timeline_data": _encode_timeline_codes(timeline_codes),
+    "timeline_complete": bool(history_available and history_complete),
     "segments": segments,
     "activity": activity,
   }
@@ -201,18 +275,67 @@ def _bound_segments(
   start: int,
   end: int,
   limit: int,
+  timeline_codes: list[int],
 ) -> list[dict[str, Any]]:
   if len(segments) <= limit:
     return segments
-  recent = [dict(segment) for segment in segments[-(limit - 1):]]
-  retained_start = int(recent[0]["start"])
-  if recent[0]["state"] == "unknown":
-    recent[0]["start"] = start
-    return recent
-  return [
-    {"start": start, "end": retained_start, "state": "unknown"},
-    *recent,
-  ]
+  reduced: list[dict[str, Any]] = []
+  point_count = len(timeline_codes)
+  for bucket in range(limit):
+    point_start = (bucket * point_count) // limit
+    point_end = ((bucket + 1) * point_count) // limit
+    if point_end <= point_start:
+      point_end = point_start + 1
+    selected = max(
+      timeline_codes[point_start:point_end],
+      key=lambda code: _BINARY_TIMELINE_PRIORITY[_BINARY_CODE_STATES[code]],
+    )
+    segment_start = start + ((end - start) * bucket) // limit
+    segment_end = start + ((end - start) * (bucket + 1)) // limit
+    state = _BINARY_CODE_STATES[selected]
+    if reduced and reduced[-1]["state"] == state:
+      reduced[-1]["end"] = segment_end
+    else:
+      reduced.append(
+        {"start": segment_start, "end": segment_end, "state": state}
+      )
+  return reduced
+
+
+def _timeline_codes_from_segments(
+  segments: list[dict[str, Any]],
+  start: int,
+  end: int,
+  points: int,
+) -> list[int]:
+  codes = [_BINARY_STATE_CODES["unknown"]] * points
+  priorities = [0] * points
+  span = end - start
+  for segment in segments:
+    segment_start = max(start, int(segment["start"]))
+    segment_end = min(end, int(segment["end"]))
+    if segment_end <= segment_start:
+      continue
+    state = _normalise_binary_state(segment.get("state"))
+    code = _BINARY_STATE_CODES[state]
+    priority = _BINARY_TIMELINE_PRIORITY[state]
+    first = ((segment_start - start) * points) // span
+    last = (((segment_end - start) * points) - 1) // span
+    first = max(0, min(points - 1, first))
+    last = max(first, min(points - 1, last))
+    for index in range(first, last + 1):
+      if priority > priorities[index]:
+        codes[index] = code
+        priorities[index] = priority
+  return codes
+
+
+def _encode_timeline_codes(codes: list[int]) -> str:
+  packed = bytearray((len(codes) + 3) // 4)
+  for index, code in enumerate(codes):
+    shift = 6 - ((index % 4) * 2)
+    packed[index // 4] |= (code & 0x03) << shift
+  return packed.hex()
 
 
 def _collapse_same_timestamp(
