@@ -18,6 +18,7 @@ CONF_ENERGY_GAS = "energy_gas"
 CONF_ENERGY_WATER = "energy_water"
 
 CONF_SENSORS = "sensors"
+CONF_BINARY_SENSORS = "binary_sensors"
 CONF_WEATHERS = "weathers"
 CONF_LIGHTS = "lights"
 CONF_SWITCHES = "switches"

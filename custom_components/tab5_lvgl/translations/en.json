@@ -63,6 +63,7 @@
         "description": "Applies to all panels. Changes here affect every connected device.",
         "data": {
           "sensors": "Sensors",
+          "binary_sensors": "Binary sensors",
           "weathers": "Weather",
           "lights": "Lights",
           "switches": "Switches",

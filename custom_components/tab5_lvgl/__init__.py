@@ -24,6 +24,10 @@ try:
 except ImportError:  # pragma: no cover - older HA fallback
   get_significant_states = None
 try:
+  from homeassistant.components.recorder.history import get_last_state_changes
+except ImportError:  # pragma: no cover - older HA fallback
+  get_last_state_changes = None
+try:
   from homeassistant.components.recorder.history import state_changes_during_period
 except ImportError:  # pragma: no cover - older HA fallback
   state_changes_during_period = None
@@ -58,8 +62,22 @@ except Exception:  # pragma: no cover - older HA fallback
   get_url = None
 from homeassistant.util import dt as dt_util, slugify
 
+from .binary_history import (
+  BINARY_HISTORY_KIND,
+  BinaryHistoryRequestError,
+  build_binary_history_error,
+  build_binary_history_response,
+  parse_binary_history_request,
+)
+from .binary_sensor_helpers import (
+  build_binary_sensor_meta_entry,
+  build_binary_sensor_state_payload,
+  migrate_binary_sensor_config,
+  split_binary_sensor_entities,
+)
 from .const import (
   CONF_BASE_TOPIC,
+  CONF_BINARY_SENSORS,
   CONF_CAMERAS,
   CONF_CLIMATES,
   CONF_COVERS,
@@ -264,7 +282,9 @@ FORECAST_DAILY_LIMIT = 8
 FORECAST_HOURLY_PAYLOAD_LIMIT = 168
 FORECAST_CACHE_TTL = timedelta(minutes=10)
 
-_CONFIG_META_RUNTIME_FIELDS = frozenset({"icon", "state", "value"})
+_CONFIG_META_RUNTIME_FIELDS = frozenset(
+  {"available", "icon", "last_changed", "state", "value"}
+)
 
 
 def _config_signature(config_data: Dict[str, Any]) -> str:
@@ -377,6 +397,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   entry.async_on_unload(entry.add_update_listener(_async_update_listener))
   await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
   await bridge.async_publish_config_to_device()
+  return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+  """Migrate legacy generic sensor selections to dedicated entity lists."""
+  if entry.version > 2:
+    return False
+  if entry.version == 2:
+    return True
+
+  data, options, changed = migrate_binary_sensor_config(
+    entry.data,
+    entry.options,
+    sensor_key=CONF_SENSORS,
+    binary_sensor_key=CONF_BINARY_SENSORS,
+  )
+  update: Dict[str, Any] = {"version": 2}
+  if changed:
+    update["data"] = data
+    update["options"] = options
+  hass.config_entries.async_update_entry(entry, **update)
+  _LOGGER.info(
+    "HomeTiles Bridge migrated config entry %s to version 2",
+    entry.entry_id,
+  )
   return True
 
 
@@ -928,11 +973,23 @@ class Tab5Bridge:
     self.base_topic = _normalise_topic(data.get(CONF_BASE_TOPIC, DEFAULT_BASE), DEFAULT_BASE)
     self.ha_prefix = _normalise_topic(data.get(CONF_HA_PREFIX, DEFAULT_PREFIX), DEFAULT_PREFIX)
     raw_sensors = _unique_entities(list(data.get(CONF_SENSORS, [])))
+    raw_binary_sensors = _unique_entities(
+      list(data.get(CONF_BINARY_SENSORS, []))
+    )
     raw_weathers = _unique_entities(list(data.get(CONF_WEATHERS, [])))
-    legacy_weathers, configured_sensors = _split_weather_entities(raw_sensors)
+    legacy_weathers, legacy_sensors = _split_weather_entities(raw_sensors)
+    legacy_binary_sensors, configured_sensors = split_binary_sensor_entities(
+      legacy_sensors
+    )
+    configured_binary_sensors, _ = split_binary_sensor_entities(
+      raw_binary_sensors
+    )
     self.weathers = _unique_entities(legacy_weathers + raw_weathers)
     self._configured_sensors: List[str] = configured_sensors
     self.sensors: List[str] = []
+    self.binary_sensors: List[str] = _unique_entities(
+      configured_binary_sensors + legacy_binary_sensors
+    )
     self.lights: List[str] = _unique_entities(list(data.get(CONF_LIGHTS, [])))
     self.switches: List[str] = _unique_entities(list(data.get(CONF_SWITCHES, [])))
     self.media_players: List[str] = _unique_entities(list(data.get(CONF_MEDIA_PLAYERS, [])))
@@ -1028,6 +1085,7 @@ class Tab5Bridge:
   def _collect_all_entries_entities(self) -> Dict[str, Any]:
     """Merge entity lists from all config entries in this integration."""
     all_sensors: List[str] = []
+    all_binary_sensors: List[str] = []
     all_lights: List[str] = []
     all_switches: List[str] = []
     all_media_players: List[str] = []
@@ -1041,10 +1099,19 @@ class Tab5Bridge:
       if entry.options:
         data.update(entry.options)
       raw_sensors = _unique_entities(list(data.get(CONF_SENSORS, [])))
+      raw_binary_sensors = _unique_entities(
+        list(data.get(CONF_BINARY_SENSORS, []))
+      )
       raw_weathers = _unique_entities(list(data.get(CONF_WEATHERS, [])))
-      legacy_weathers, sensors = _split_weather_entities(raw_sensors)
+      legacy_weathers, legacy_sensors = _split_weather_entities(raw_sensors)
+      legacy_binary_sensors, sensors = split_binary_sensor_entities(
+        legacy_sensors
+      )
+      binary_sensors, _ = split_binary_sensor_entities(raw_binary_sensors)
       weathers = _unique_entities(legacy_weathers + raw_weathers)
       all_sensors.extend(sensors)
+      all_binary_sensors.extend(binary_sensors)
+      all_binary_sensors.extend(legacy_binary_sensors)
       all_lights.extend(list(data.get(CONF_LIGHTS, [])))
       all_switches.extend(list(data.get(CONF_SWITCHES, [])))
       all_media_players.extend(list(data.get(CONF_MEDIA_PLAYERS, [])))
@@ -1057,6 +1124,7 @@ class Tab5Bridge:
           all_scene_map.setdefault((alias or "").lower(), entity)
     return {
       "sensors": _unique_entities(all_sensors),
+      "binary_sensors": _unique_entities(all_binary_sensors),
       "lights": _unique_entities(all_lights),
       "switches": _unique_entities(all_switches),
       "media_players": _unique_entities(all_media_players),
@@ -1080,6 +1148,7 @@ class Tab5Bridge:
     self.sensors = _unique_entities(
       merged["sensors"] + internal_sensors + local_temperatures
     )
+    self.binary_sensors = merged["binary_sensors"]
     self.lights = merged["lights"]
     self.switches = _unique_entities(merged["switches"] + local_relays)
     self.media_players = merged["media_players"]
@@ -1090,6 +1159,7 @@ class Tab5Bridge:
     self.scene_map.update(merged["scene_map"])
     self.tracked_entities = _unique_entities(
       self.sensors
+      + self.binary_sensors
       + self.lights
       + self.switches
       + self.media_players
@@ -1297,6 +1367,8 @@ class Tab5Bridge:
           "ha_prefix": self.ha_prefix,
           "sensors": self.sensors,
           "sensor_meta": self._build_sensor_meta(),
+          CONF_BINARY_SENSORS: self.binary_sensors,
+          "binary_sensor_meta": self._build_binary_sensor_meta(),
           CONF_WEATHERS: self.weathers,
           "weather_meta": self._build_weather_meta(),
           "lights": self.lights,
@@ -1354,8 +1426,27 @@ class Tab5Bridge:
     for entity_id in self.tracked_entities:
       state = self.hass.states.get(entity_id)
       if not state:
+        if entity_id in self.binary_sensors:
+          await self._async_publish_binary_sensor_absent_state(entity_id)
         continue
       await self._async_publish_entity_state(entity_id, state)
+
+  async def _async_publish_binary_sensor_absent_state(
+    self, entity_id: str
+  ) -> None:
+    """Replace a stale retained binary state when HA has no current entity."""
+    if entity_id not in self.binary_sensors or not self._owns_state_publish(entity_id):
+      return
+    await mqtt.async_publish(
+      self.hass,
+      self._ha_topic_for_entity(entity_id, "state"),
+      json.dumps(
+        build_binary_sensor_state_payload(None, {}, None),
+        separators=(",", ":"),
+      ),
+      qos=0,
+      retain=True,
+    )
 
   async def _async_build_state_payload(
     self,
@@ -1693,6 +1784,140 @@ class Tab5Bridge:
     await self.async_publish_config_to_device(force=force)
     await self.async_publish_snapshot()
 
+  async def _async_handle_binary_history_request(
+    self, parsed: Dict[str, Any]
+  ) -> None:
+    """Handle the bounded, versioned binary history protocol."""
+    entity_id = str(parsed.get("entity_id") or "").strip()
+
+    async def _publish_error(code: str) -> None:
+      _LOGGER.warning(
+        "Tab5 binary history request failed for %s: %s",
+        entity_id or "<missing>",
+        code,
+      )
+      await mqtt.async_publish(
+        self.hass,
+        self.history_response_topic,
+        json.dumps(
+          build_binary_history_error(entity_id, code),
+          separators=(",", ":"),
+        ),
+        qos=0,
+        retain=False,
+      )
+
+    try:
+      request = parse_binary_history_request(parsed)
+    except BinaryHistoryRequestError as err:
+      await _publish_error(err.code)
+      return
+
+    if not entity_id:
+      await _publish_error("missing_entity_id")
+      return
+    if not entity_id.startswith("binary_sensor."):
+      await _publish_error("invalid_entity_id")
+      return
+    if entity_id not in self.binary_sensors:
+      await _publish_error("entity_not_configured")
+      return
+
+    end = dt_util.utcnow()
+    start = end - timedelta(hours=request.hours)
+    current_state = self.hass.states.get(entity_id)
+
+    def _fetch_binary_history_states() -> List[Any]:
+      if get_last_state_changes is None:
+        return []
+
+      # Fetch one state at the left edge separately from the newest bounded
+      # changes. Home Assistant's period helper applies ``limit`` in ascending
+      # order, so using it for the full range would retain the oldest changes
+      # instead of the recent activity shown in the popup.
+      start_states: List[Any] = []
+      if state_changes_during_period is not None:
+        try:
+          start_history = state_changes_during_period(
+            self.hass,
+            start,
+            start,
+            entity_id,
+            include_start_time_state=True,
+            no_attributes=True,
+            limit=1,
+          )
+        except TypeError:
+          # Older unsupported recorder signatures must not trigger an
+          # unbounded compatibility query. The recent bounded query below can
+          # still provide useful history, with an unknown left edge.
+          _LOGGER.debug(
+            "Home Assistant recorder does not support a bounded binary-history start-state query"
+          )
+        else:
+          candidates = list(start_history.get(entity_id, [])) if start_history else []
+          if candidates:
+            start_states.append(candidates[0])
+
+      recent_limit = request.max_transitions + 1
+      recent_history = get_last_state_changes(
+        self.hass,
+        recent_limit,
+        entity_id,
+      )
+      recent_states = (
+        list(recent_history.get(entity_id, [])) if recent_history else []
+      )
+      # Keep the in-memory contract bounded even if a future recorder helper
+      # accidentally returns more rows than requested. A full result slice may
+      # have omitted older rows between the separately fetched start state and
+      # the newest rows. Drop that isolated start state in this case so the
+      # response marks the unobserved prefix as unknown instead of inventing a
+      # continuous state across the gap.
+      recent_states = recent_states[-recent_limit:]
+      if len(recent_states) >= recent_limit:
+        start_states = []
+      return start_states + recent_states
+
+    history_available = get_last_state_changes is not None
+    try:
+      if history_available:
+        history_states: List[Any] = await get_instance(
+          self.hass
+        ).async_add_executor_job(_fetch_binary_history_states)
+      else:
+        history_states = []
+    except Exception:
+      _LOGGER.exception(
+        "Tab5 binary history recorder query failed for %s", entity_id
+      )
+      history_states = []
+      history_available = False
+
+    response = build_binary_history_response(
+      entity_id,
+      history_states,
+      current_state,
+      start,
+      end,
+      request.hours,
+      request.max_transitions,
+      history_available=history_available,
+    )
+    _LOGGER.debug(
+      "Tab5 binary history response for %s: %d segments, %d activity entries",
+      entity_id,
+      len(response["segments"]),
+      len(response["activity"]),
+    )
+    await mqtt.async_publish(
+      self.hass,
+      self.history_response_topic,
+      json.dumps(response, separators=(",", ":")),
+      qos=0,
+      retain=False,
+    )
+
   async def _async_handle_history_request(self, msg: ReceiveMessage) -> None:
     """Handle history requests from the Tab5 popup."""
     if not self.history_response_topic:
@@ -1701,6 +1926,10 @@ class Tab5Bridge:
     parsed = _try_parse_json(msg.payload)
     if not isinstance(parsed, dict):
       _LOGGER.warning("Tab5 history request ignored (invalid payload): %s", msg.payload)
+      return
+
+    if str(parsed.get("kind") or "").strip().lower() == BINARY_HISTORY_KIND:
+      await self._async_handle_binary_history_request(parsed)
       return
 
     entity_id = str(parsed.get("entity_id") or "").strip()
@@ -2794,7 +3023,13 @@ class Tab5Bridge:
   def _handle_state_event(self, event) -> None:
     entity_id = event.data.get("entity_id")
     new_state = event.data.get("new_state")
-    if not entity_id or not new_state:
+    if not entity_id:
+      return
+    if new_state is None:
+      if entity_id in self.binary_sensors:
+        self.hass.async_create_task(
+          self._async_publish_binary_sensor_absent_state(entity_id)
+        )
       return
 
     self.hass.async_create_task(self._async_publish_entity_state(entity_id, new_state))
@@ -2949,6 +3184,15 @@ class Tab5Bridge:
       self._icon_cache[entity_id] = icon
 
   def _build_state_payload(self, entity_id: str, state: State) -> str:
+    if entity_id.startswith("binary_sensor."):
+      return json.dumps(
+        build_binary_sensor_state_payload(
+          state.state,
+          state.attributes or {},
+          state.last_changed,
+          icon=_extract_mdi_icon(state, self.hass),
+        )
+      )
     if entity_id.startswith("light."):
       payload: Dict[str, Any] = {"state": state.state}
       attrs = state.attributes or {}
@@ -3123,6 +3367,23 @@ class Tab5Bridge:
           entry["state"] = value.strip()
         if isinstance(icon, str) and icon.strip():
           entry["icon"] = icon.strip()
+      meta.append(entry)
+    return meta
+
+  def _build_binary_sensor_meta(self) -> List[Dict[str, Any]]:
+    meta: List[Dict[str, Any]] = []
+    for entity_id in self.binary_sensors:
+      entry: Dict[str, Any] = {"entity_id": entity_id}
+      state: Optional[State] = self.hass.states.get(entity_id)
+      if state:
+        entry = build_binary_sensor_meta_entry(
+          entity_id,
+          state.state,
+          state.attributes or {},
+          state.last_changed,
+          name=state.name,
+          icon=_extract_mdi_icon(state, self.hass),
+        )
       meta.append(entry)
     return meta
 
@@ -4165,7 +4426,7 @@ async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, A
     # gemachte Konfiguration beim ersten echten Connect stillschweigend
     # verwerfen, weil sonst nur der SOURCE_IMPORT-Erstell-Pfad sie uebernimmt.
     for key in (
-      CONF_SENSORS, CONF_WEATHERS, CONF_LIGHTS, CONF_SWITCHES,
+      CONF_SENSORS, CONF_BINARY_SENSORS, CONF_WEATHERS, CONF_LIGHTS, CONF_SWITCHES,
       CONF_MEDIA_PLAYERS, CONF_CLIMATES, CONF_COVERS, CONF_CAMERAS,
       CONF_SCENE_MAP,
     ):
@@ -4247,11 +4508,22 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     raise ValueError("invalid_sensors")
   sensors = [str(item).strip() for item in sensors_raw if str(item).strip()]
 
+  binary_sensors_raw = payload.get(CONF_BINARY_SENSORS) or []
+  if not isinstance(binary_sensors_raw, list):
+    raise ValueError("invalid_binary_sensors")
+  binary_sensors = [
+    str(item).strip() for item in binary_sensors_raw if str(item).strip()
+  ]
+  if any(not entity_id.startswith("binary_sensor.") for entity_id in binary_sensors):
+    raise ValueError("invalid_binary_sensors")
+
   weathers_raw = payload.get("weathers") or []
   if not isinstance(weathers_raw, list):
     raise ValueError("invalid_weathers")
   weathers = [str(item).strip() for item in weathers_raw if str(item).strip()]
   legacy_weathers, sensors = _split_weather_entities(sensors)
+  legacy_binary_sensors, sensors = split_binary_sensor_entities(sensors)
+  binary_sensors = _unique_entities(binary_sensors + legacy_binary_sensors)
   weathers = _unique_entities(weathers + legacy_weathers)
 
   lights_raw = payload.get("lights") or []
@@ -4304,6 +4576,7 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     CONF_BASE_TOPIC: base,
     CONF_HA_PREFIX: prefix,
     CONF_SENSORS: sensors,
+    CONF_BINARY_SENSORS: binary_sensors,
     CONF_WEATHERS: weathers,
     CONF_LIGHTS: lights,
     CONF_SWITCHES: switches,

@@ -19,8 +19,10 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
 
+from .binary_sensor_helpers import split_binary_sensor_entities
 from .const import (
   CONF_BASE_TOPIC,
+  CONF_BINARY_SENSORS,
   CONF_CAMERAS,
   CONF_CLIMATES,
   CONF_COVERS,
@@ -58,7 +60,7 @@ CONF_PROVISION_MQTT_PASSWORD = "mqtt_password"
 # ---------------------------------------------------------------------------
 
 class Tab5ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-  VERSION = 1
+  VERSION = 2
 
   # Von async_step_zeroconf zwischengespeichert, bis async_step_zeroconf_confirm
   # abgeschlossen ist (kein persistenter State, nur fuer die Dauer des Flows).
@@ -314,7 +316,7 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         # einem device_id-Wechsel), war die gesamte Auswahl ersatzlos weg.
         # Auf allen Eintraegen spiegeln, wie es async_step_energy schon tut.
         shared_keys = (
-          CONF_SENSORS, CONF_WEATHERS, CONF_LIGHTS, CONF_SWITCHES,
+          CONF_SENSORS, CONF_BINARY_SENSORS, CONF_WEATHERS, CONF_LIGHTS, CONF_SWITCHES,
           CONF_CLIMATES, CONF_COVERS,
           CONF_MEDIA_PLAYERS, CONF_CAMERAS, CONF_SCENE_MAP, CONF_SCENE_MAP_TEXT,
         )
@@ -332,7 +334,10 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
       step_id="entities",
       data_schema=vol.Schema({
         vol.Optional(CONF_SENSORS, default=merged.get(CONF_SENSORS, [])): selector.EntitySelector(
-          selector.EntitySelectorConfig(multiple=True)
+          selector.EntitySelectorConfig(domain=["sensor"], multiple=True)
+        ),
+        vol.Optional(CONF_BINARY_SENSORS, default=merged.get(CONF_BINARY_SENSORS, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=["binary_sensor"], multiple=True)
         ),
         vol.Optional(CONF_WEATHERS, default=merged.get(CONF_WEATHERS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(domain=["weather"], multiple=True)
@@ -419,10 +424,19 @@ def _merge_energy_checkboxes(hass, current: Dict[str, Any]) -> Dict[str, Any]:
 
 def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
   """Collect entities from all config entries to show the merged state."""
-  current_weather_from_sensors, current_sensors = _split_weather_entities(
+  current_weather_from_sensors, current_legacy_sensors = _split_weather_entities(
     list(current.get(CONF_SENSORS, []))
   )
+  current_binary_from_sensors, current_sensors = split_binary_sensor_entities(
+    current_legacy_sensors
+  )
+  current_binary_sensors, _ = split_binary_sensor_entities(
+    list(current.get(CONF_BINARY_SENSORS, []))
+  )
   all_sensors = list(current_sensors)
+  all_binary_sensors = _unique(
+    current_binary_sensors + current_binary_from_sensors
+  )
   all_weathers = _unique(list(current.get(CONF_WEATHERS, [])) + current_weather_from_sensors)
   all_lights = list(current.get(CONF_LIGHTS, []))
   all_switches = list(current.get(CONF_SWITCHES, []))
@@ -439,8 +453,16 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
     data = dict(entry.data or {})
     if entry.options:
       data.update(entry.options)
-    entry_weather_from_sensors, entry_sensors = _split_weather_entities(list(data.get(CONF_SENSORS, [])))
+    entry_weather_from_sensors, entry_legacy_sensors = _split_weather_entities(list(data.get(CONF_SENSORS, [])))
+    entry_binary_from_sensors, entry_sensors = split_binary_sensor_entities(
+      entry_legacy_sensors
+    )
+    entry_binary_sensors, _ = split_binary_sensor_entities(
+      list(data.get(CONF_BINARY_SENSORS, []))
+    )
     all_sensors.extend(entry_sensors)
+    all_binary_sensors.extend(entry_binary_sensors)
+    all_binary_sensors.extend(entry_binary_from_sensors)
     all_weathers.extend(list(data.get(CONF_WEATHERS, [])))
     all_weathers.extend(entry_weather_from_sensors)
     all_lights.extend(list(data.get(CONF_LIGHTS, [])))
@@ -453,6 +475,7 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
 
   return {
     CONF_SENSORS: _unique(all_sensors),
+    CONF_BINARY_SENSORS: _unique(all_binary_sensors),
     CONF_WEATHERS: _unique(all_weathers),
     CONF_LIGHTS: _unique(all_lights),
     CONF_SWITCHES: _unique(all_switches),
@@ -466,7 +489,14 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
-  weather_from_sensors, sensors = _split_weather_entities(_normalise_entity_list(user_input.get(CONF_SENSORS, [])))
+  weather_from_sensors, legacy_sensors = _split_weather_entities(
+    _normalise_entity_list(user_input.get(CONF_SENSORS, []))
+  )
+  binary_from_sensors, sensors = split_binary_sensor_entities(legacy_sensors)
+  selected_binary, _ = split_binary_sensor_entities(
+    _normalise_entity_list(user_input.get(CONF_BINARY_SENSORS, []))
+  )
+  binary_sensors = _unique(selected_binary + binary_from_sensors)
   weathers = _unique(
     _normalise_entity_list(user_input.get(CONF_WEATHERS, [])) + weather_from_sensors
   )
@@ -499,6 +529,7 @@ def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) ->
   updated.pop("energy_enabled", None)  # remove old single checkbox
   updated.pop("energy_enabled", None)  # remove old single checkbox
   updated[CONF_SENSORS] = sensors
+  updated[CONF_BINARY_SENSORS] = binary_sensors
   updated[CONF_WEATHERS] = weathers
   updated[CONF_LIGHTS] = lights
   updated[CONF_SWITCHES] = switches

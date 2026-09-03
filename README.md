@@ -9,7 +9,7 @@ Home Assistant custom integration for the [HomeTiles](https://github.com/GalusPe
 This integration is the Home Assistant companion for the **HomeTiles** firmware. It handles:
 
 - Pushing entity states, metadata and icons to the display in real time
-- Sensor history for popup charts (24h / 5min buckets)
+- Numeric sensor history plus bounded binary-sensor timelines for 24 hours or 7 days
 - Weather forecasts (daily + hourly)
 - Energy dashboard data (consumption, solar, grid, battery, gas, water)
 - Light, switch, cover, climate, media player and scene control from the display
@@ -53,7 +53,7 @@ Detailed instructions: [bridge documentation](https://galusperes.github.io/HomeT
 Configure via the Home Assistant UI:
 
 - **Panel Settings** - MQTT base topic, HA prefix, device metadata
-- **Entity Configuration** - Sensors, weather, lights, switches, covers, climate devices, media players, scenes
+- **Entity Configuration** - Sensors, binary sensors, weather, lights, switches, covers, climate devices, media players, scenes
 - **Energy Dashboard** - Electricity, gas and water from the HA Energy Dashboard
 
 ## MQTT Topics
@@ -66,7 +66,7 @@ The integration communicates with the display firmware via MQTT:
 | `tab5_lvgl/config/{id}/bridge` | Display > HA | Device announcement and local I/O discovery |
 | `tab5_lvgl/config/{id}/bridge/apply` | HA > Display | Full configuration push |
 | `tab5_lvgl/config/{id}/bridge/icons` | HA > Display | Lightweight icon updates |
-| `tab5_lvgl/config/{id}/history/*` | Bidirectional | Sensor history request/response |
+| `tab5_lvgl/config/{id}/history/*` | Bidirectional | Numeric and binary-sensor history request/response |
 | `tab5_lvgl/config/{id}/weather/*` | Bidirectional | Weather forecast request/response |
 | `tab5_lvgl/config/{id}/energy/*` | Bidirectional | Energy data request/response |
 | `base_topic/cmnd/light` | Display > HA | Light control commands |
@@ -83,6 +83,40 @@ The integration communicates with the display firmware via MQTT:
 | `base_topic/stat/screensaver_brightness` | Display > HA | Current screensaver brightness (1-100%) |
 | `base_topic/cmnd/io/{channel_id}` | HA > Display | Local relay command (`ON`/`OFF`, not retained) |
 | `base_topic/stat/io/{channel_id}` | Display > HA | Retained local relay or temperature state |
+
+### Binary sensor protocol
+
+The retained bridge configuration contains dedicated `binary_sensors` and
+`binary_sensor_meta` arrays. Each available metadata entry includes its current
+`state`, `available`, `device_class`, `last_changed`, name and icon. Live state
+uses `<ha_prefix>/binary_sensor/<object_id>/state` with this JSON contract:
+
+```json
+{"state":"on","available":true,"device_class":"occupancy","last_changed":1788424370,"icon":"mdi:home"}
+```
+
+The live `icon` is resolved by Home Assistant for the current state. Default
+device-class icons therefore follow state changes, while an icon explicitly set
+in Home Assistant remains fixed; an icon selected directly on the HomeTiles tile
+still has highest priority. If a configured entity no longer exists, the bridge
+publishes a retained JSON-null tombstone so an old `on` or `off` value cannot
+remain visible.
+
+Legacy configurations that stored `binary_sensor.*` IDs in `sensors` are
+migrated automatically. The numeric history request remains unchanged. Binary
+history uses a separate versioned mode and accepts only configured entities:
+
+```json
+{"version":1,"kind":"binary","entity_id":"binary_sensor.desk_presence","hours":24,"max_transitions":48}
+```
+
+`hours` is limited to `24` or `168`; `max_transitions` defaults to 48 and must
+be between 2 and 96. The response contains Unix-second `range_start`,
+`range_end` and `last_changed` values, the current state and device class, plus
+chronologically sorted `segments` (`start`, `end`, `state`) and `activity`
+(`timestamp`, `state`). Both arrays remain within the requested limit. `unknown` and
+`unavailable` are preserved. `history_available: false` distinguishes a
+Recorder failure from a successful query with no transitions.
 
 Firmware may advertise local relays and temperature inputs in its device
 announcement. IDs must be unique per panel and stay stable across firmware
@@ -113,6 +147,11 @@ numeric suffix such as `_2`; migrations preserve that suffix deterministically.
 - Home Assistant 2025.11 or newer
 - MQTT broker configured in Home Assistant
 - [HomeTiles](https://github.com/GalusPeres/HomeTiles) firmware
+
+Binary sensors require a HomeTiles firmware build with the dedicated Binary
+Sensor tile (type 20). Flash that compatible firmware before upgrading the bridge
+to v0.6.39 or newer because older firmware does not understand the structured
+binary-state payload.
 
 Camera popups require HomeTiles firmware v0.6.3 or newer. Camera support is
 experimental: the bridge transcodes the selected Home Assistant camera into
