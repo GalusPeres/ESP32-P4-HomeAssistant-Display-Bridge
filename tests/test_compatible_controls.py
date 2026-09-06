@@ -127,6 +127,7 @@ class CompatibleControlsTest(unittest.IsolatedAsyncioTestCase):
         nodes = [node for node in tree.body if getattr(node, "name", None) in names]
         namespace = dict(vars(load_module("const")))
         namespace.update(vars(C))
+        namespace.update(vars(load_module("editable_helpers")))
         namespace["split_binary_sensor_entities"] = load_module("binary_sensor_helpers").split_binary_sensor_entities
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), *nodes], type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), "control-config", "exec"), namespace)

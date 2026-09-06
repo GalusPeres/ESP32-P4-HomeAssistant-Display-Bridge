@@ -48,3 +48,7 @@ HISTORY_RESPONSE_SUFFIX = "history/response"
 ENERGY_REQUEST_SUFFIX = "energy/request"
 ENERGY_RESPONSE_SUFFIX = "energy/response"
 WEATHER_REQUEST_SUFFIX = "weather/request"
+
+CONF_NUMBERS = "numbers"
+CONF_SELECTS = "selects"
+CONF_DATETIMES = "datetimes"

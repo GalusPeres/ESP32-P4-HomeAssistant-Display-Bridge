@@ -9,6 +9,7 @@ from io import BytesIO
 from ipaddress import ip_address
 import json
 import logging
+import secrets
 from time import monotonic
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -98,7 +99,9 @@ from .state_history import (
   sensor_live_state_payload,
   sensor_state_kind,
 )
+from .editable_helpers import (EDITABLE_LISTS, EDITABLE_DOMAINS, NUMBER_DOMAINS, SELECT_DOMAINS, DATETIME_DOMAINS, editable_selection, domain_of, build_editable_payload, build_editable_service_call, add_number_history, MAX_CONTROL_BYTES)
 from .const import (
+  CONF_NUMBERS, CONF_SELECTS, CONF_DATETIMES,
   CONF_BASE_TOPIC,
   CONF_BINARY_SENSORS,
   CONF_CAMERAS,
@@ -1023,6 +1026,9 @@ class Tab5Bridge:
     self.switches: List[str] = _unique_entities(list(data.get(CONF_SWITCHES, [])))
     self.media_players: List[str] = _unique_entities(list(data.get(CONF_MEDIA_PLAYERS, [])))
     self.climates: List[str] = _unique_entities(list(data.get(CONF_CLIMATES, [])))
+    self.numbers = editable_selection(data.get(CONF_NUMBERS, []), EDITABLE_LISTS["numbers"])
+    self.selects = editable_selection(data.get(CONF_SELECTS, []), EDITABLE_LISTS["selects"])
+    self.datetimes = editable_selection(data.get(CONF_DATETIMES, []), EDITABLE_LISTS["datetimes"])
     self.covers: List[str] = _unique_entities(list(data.get(CONF_COVERS, [])))
     self.cameras: List[str] = _unique_entities(list(data.get(CONF_CAMERAS, [])))
     self.tracked_entities: List[str] = []
@@ -1057,6 +1063,9 @@ class Tab5Bridge:
     self._unsub_scene = None
     self._unsub_light = None
     self._unsub_switch = None
+    self._unsub_value = None
+    self._editable_seen = {}
+    self._editable_session = self.hass.data.setdefault(DOMAIN, {}).setdefault("editable_session", secrets.token_hex(16))
     self._unsub_media = None
     self._unsub_climate = None
     self._unsub_cover = None
@@ -1119,6 +1128,9 @@ class Tab5Bridge:
     all_switches: List[str] = []
     all_media_players: List[str] = []
     all_climates: List[str] = []
+    all_numbers: List[str] = []
+    all_selects: List[str] = []
+    all_datetimes: List[str] = []
     all_covers: List[str] = []
     all_cameras: List[str] = []
     all_weathers: List[str] = []
@@ -1145,6 +1157,9 @@ class Tab5Bridge:
       all_switches.extend(list(data.get(CONF_SWITCHES, [])))
       all_media_players.extend(list(data.get(CONF_MEDIA_PLAYERS, [])))
       all_climates.extend(list(data.get(CONF_CLIMATES, [])))
+      all_numbers.extend(editable_selection(data.get(CONF_NUMBERS, []), EDITABLE_LISTS["numbers"]))
+      all_selects.extend(editable_selection(data.get(CONF_SELECTS, []), EDITABLE_LISTS["selects"]))
+      all_datetimes.extend(editable_selection(data.get(CONF_DATETIMES, []), EDITABLE_LISTS["datetimes"]))
       all_covers.extend(list(data.get(CONF_COVERS, [])))
       all_cameras.extend(list(data.get(CONF_CAMERAS, [])))
       all_weathers.extend(weathers)
@@ -1158,6 +1173,9 @@ class Tab5Bridge:
       "switches": _unique_entities(all_switches),
       "media_players": _unique_entities(all_media_players),
       "climates": _unique_entities(all_climates),
+      "numbers": _unique_entities(all_numbers),
+      "selects": _unique_entities(all_selects),
+      "datetimes": _unique_entities(all_datetimes),
       "covers": _unique_entities(all_covers),
       "cameras": _unique_entities(all_cameras),
       "weathers": _unique_entities(all_weathers),
@@ -1182,6 +1200,9 @@ class Tab5Bridge:
     self.switches = _unique_entities(merged["switches"] + local_relays)
     self.media_players = merged["media_players"]
     self.climates = merged["climates"]
+    self.numbers = merged["numbers"]
+    self.selects = merged["selects"]
+    self.datetimes = merged["datetimes"]
     self.covers = merged["covers"]
     self.cameras = merged["cameras"]
     self.weathers = merged["weathers"]
@@ -1193,6 +1214,9 @@ class Tab5Bridge:
       + self.switches
       + self.media_players
       + self.climates
+      + self.numbers
+      + self.selects
+      + self.datetimes
       + self.covers
       + self.weathers
       + list(self.scene_map.values())
@@ -1239,6 +1263,9 @@ class Tab5Bridge:
       self._async_handle_switch_command,
     )
 
+    self._unsub_value = await mqtt.async_subscribe(
+      self.hass, f"{self.base_topic}/cmnd/value", self._async_handle_value_command,
+    )
     self._unsub_media = await mqtt.async_subscribe(
       self.hass,
       f"{self.base_topic}/cmnd/media",
@@ -1343,6 +1370,9 @@ class Tab5Bridge:
     if self._unsub_switch:
       self._unsub_switch()
       self._unsub_switch = None
+    if self._unsub_value:
+      self._unsub_value()
+      self._unsub_value = None
     if self._unsub_media:
       self._unsub_media()
       self._unsub_media = None
@@ -1410,8 +1440,12 @@ class Tab5Bridge:
           "media_player_meta": self._build_entity_meta(self.media_players),
           CONF_CLIMATES: self.climates,
           "climate_meta": self._build_entity_meta(self.climates),
+          CONF_NUMBERS: self.numbers,
+          CONF_SELECTS: self.selects,
+          CONF_DATETIMES: self.datetimes,
           CONF_COVERS: self.covers,
           "cover_meta": self._build_entity_meta(self.covers),
+          "editable_meta": self._build_entity_meta(self.numbers + self.selects + self.datetimes),
           CONF_CAMERAS: self.cameras,
           "camera_meta": self._build_entity_meta(self.cameras),
           "scene_meta": self._build_scene_meta(),
@@ -1456,6 +1490,8 @@ class Tab5Bridge:
     """Push all configured entities to MQTT."""
     for entity_id in self.tracked_entities:
       state = self.hass.states.get(entity_id)
+      if entity_id in getattr(self, "numbers", []) + getattr(self, "selects", []) + getattr(self, "datetimes", []) and not state:
+        await self._async_publish_editable_state(entity_id, None)
       if not state:
         if entity_id in self.binary_sensors:
           await self._async_publish_binary_sensor_absent_state(entity_id)
@@ -1463,6 +1499,120 @@ class Tab5Bridge:
           await self._async_publish_switch_absent_state(entity_id)
         continue
       await self._async_publish_entity_state(entity_id, state)
+
+  def _editable_payload(self, entity_id, state):
+    payload = build_editable_payload(
+      entity_id, state.state if state else None,
+      state.attributes if state else {}, self._editable_session,
+      self.hass.config.time_zone,
+    )
+    changed = getattr(state, "last_changed", None)
+    if isinstance(changed, datetime):
+      payload["last_changed"] = int(changed.timestamp())
+    return payload
+
+  async def _async_publish_editable_state(self, entity_id, state):
+    if not self._owns_state_publish(entity_id):
+      return
+    payload = json.dumps(self._editable_payload(entity_id, state), ensure_ascii=False)
+    if len(payload.encode("utf-8")) > MAX_CONTROL_BYTES:
+      return
+    # An additive topic preserves plain state payloads consumed by old firmware.
+    await mqtt.async_publish(self.hass, self._ha_topic_for_entity(entity_id, "control"),
+                             payload, qos=0, retain=True)
+
+  async def _async_handle_value_command(self, msg):
+    if getattr(msg, "retain", False) or len(msg.payload) > 2048:
+      return
+    command = _try_parse_json(msg.payload)
+    if not isinstance(command, dict):
+      return
+    entity_id = command.get("entity_id")
+    command_id = command.get("id")
+    if (entity_id not in self.numbers + self.selects + self.datetimes or
+        not isinstance(command_id, str) or not 1 <= len(command_id) <= 48):
+      return
+    now = dt_util.utcnow().timestamp()
+    deadline = command.get("deadline")
+    status = "invalid_value"
+    try:
+      if (isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or
+          not 0 < deadline - now <= 15 or command.get("session") != self._editable_session):
+        raise ValueError("expired")
+      self._editable_seen = {key: expiry for key, expiry in self._editable_seen.items() if expiry > now}
+      if command_id in self._editable_seen or len(self._editable_seen) >= 128:
+        return
+      self._editable_seen[command_id] = deadline
+      state = self.hass.states.get(entity_id)
+      payload = self._editable_payload(entity_id, state)
+      if command.get("revision") != payload["revision"]:
+        raise ValueError("changed")
+      domain, service, data = build_editable_service_call(
+        entity_id, command.get("value"), payload, self.hass.config.time_zone)
+      await self.hass.services.async_call(domain, service, {"entity_id": entity_id, **data}, blocking=True)
+      status = "ok"
+    except ValueError as error:
+      status = str(error)
+    except Exception:
+      status = "failed"
+      _LOGGER.exception("HomeTiles value command failed for %s", entity_id)
+    await mqtt.async_publish(self.hass, f"{self.base_topic}/stat/value",
+      json.dumps({"entity_id": entity_id, "id": command_id, "status": status}), qos=0, retain=False)
+    await self._async_publish_editable_state(entity_id, self.hass.states.get(entity_id))
+
+  async def _async_handle_editable_history(self, parsed):
+    entity_id = parsed.get("entity_id")
+    if entity_id not in self.numbers + self.selects + self.datetimes:
+      return
+    try:
+      request = parse_state_history_request(parsed)
+    except StateHistoryRequestError:
+      return
+    end = dt_util.utcnow()
+    start = end - timedelta(hours=request.hours)
+    current = self.hass.states.get(entity_id)
+    available, complete, until = False, False, start
+    states = []
+    try:
+      recorder = get_instance(self.hass)
+      recorded = getattr(recorder, "entity_filter", None)
+      available = bool(state_changes_during_period or get_last_state_changes)
+      if callable(recorded):
+        available = available and recorded(entity_id)
+      if available:
+        def fetch():
+          return fetch_bounded_state_history(self.hass, entity_id, start, end,
+            state_changes_during_period=state_changes_during_period,
+            get_last_state_changes=get_last_state_changes,
+            recent_limit=request.max_transitions + 1)
+        states, complete, until = await recorder.async_add_executor_job(fetch)
+    except Exception:
+      available = False
+      _LOGGER.debug("HomeTiles Recorder unavailable for %s", entity_id, exc_info=True)
+    if domain_of(entity_id) in DATETIME_DOMAINS:
+      normalized = []
+      attributes = current.attributes if current else {}
+      for record in states:
+        raw = record.get("state") if isinstance(record, dict) else getattr(record, "state", None)
+        changed = record.get("last_changed", record.get("last_updated")) if isinstance(record, dict) else getattr(record, "last_changed", None)
+        value = build_editable_payload(entity_id, raw, attributes, self._editable_session, self.hass.config.time_zone)
+        normalized.append({"state": value["state"], "last_changed": changed})
+      states = normalized
+      if current is not None:
+        current = {"state": self._editable_payload(entity_id, current)["state"],
+                   "last_changed": getattr(current, "last_changed", None)}
+    response = build_state_history_response(entity_id, states, current, start, end,
+      request.hours, request.max_transitions, history_available=available,
+      history_complete=complete, history_complete_until=until)
+    if domain_of(entity_id) in NUMBER_DOMAINS:
+      response = add_number_history(response, states if available else [], start, end,
+                                   288 if request.hours == 24 else 168,
+                                   complete=complete, complete_until=until)
+      response["unit"] = str((current.attributes if current else {}).get("unit_of_measurement") or "")[:32]
+    response["request_id"] = str(parsed.get("request_id") or "")[:48]
+    encoded = json.dumps(response, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    if len(encoded.encode("utf-8")) <= STATE_HISTORY_MAX_RESPONSE_BYTES:
+      await mqtt.async_publish(self.hass, self.history_response_topic, encoded, qos=0, retain=False)
 
   async def _async_publish_binary_sensor_absent_state(
     self, entity_id: str
@@ -1538,6 +1688,8 @@ class Tab5Bridge:
     if not self._owns_state_publish(entity_id):
       return
     topic = self._ha_topic_for_entity(entity_id, "state")
+    if entity_id in self.numbers + self.selects + self.datetimes:
+      await self._async_publish_editable_state(entity_id, state)
 
     if entity_id.startswith("media_player."):
       generation = self._media_publish_generation.get(entity_id, 0) + 1
@@ -2171,6 +2323,10 @@ class Tab5Bridge:
       return
 
     history_kind = str(parsed.get("kind") or "").strip().lower()
+    if history_kind == "editable":
+      if not getattr(msg, "retain", False):
+        await self._async_handle_editable_history(parsed)
+      return
     if history_kind == STATE_HISTORY_KIND:
       await self._async_handle_state_history_request(parsed)
       return
@@ -3272,6 +3428,8 @@ class Tab5Bridge:
     if not entity_id:
       return
     if new_state is None:
+      if entity_id in getattr(self, "numbers", []) + getattr(self, "selects", []) + getattr(self, "datetimes", []):
+        self.hass.async_create_task(self._async_publish_editable_state(entity_id, None))
       if entity_id in self.binary_sensors:
         self.hass.async_create_task(
           self._async_publish_binary_sensor_absent_state(entity_id)
@@ -4684,6 +4842,7 @@ async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, A
     for key in (
       CONF_SENSORS, CONF_BINARY_SENSORS, CONF_WEATHERS, CONF_LIGHTS, CONF_SWITCHES,
       CONF_MEDIA_PLAYERS, CONF_CLIMATES, CONF_COVERS, CONF_CAMERAS,
+      CONF_NUMBERS, CONF_SELECTS, CONF_DATETIMES,
       CONF_SCENE_MAP,
     ):
       if should_import_feedback_selection(
@@ -4848,6 +5007,9 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     CONF_CAMERAS: cameras,
     CONF_SCENE_MAP: scene_map,
   }
+  for key, domains in EDITABLE_LISTS.items():
+    if key in payload:
+      data[key] = editable_selection(payload[key], domains)
   if manufacturer:
     data[CONF_MANUFACTURER] = manufacturer
   if model:

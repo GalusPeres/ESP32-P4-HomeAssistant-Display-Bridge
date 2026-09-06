@@ -72,7 +72,10 @@
           "covers": "Covers",
           "cameras": "Cameras",
           "scene_entities": "Scenes / Scripts / Buttons",
-          "scene_map_text": "Action aliases"
+          "scene_map_text": "Action aliases",
+          "numbers": "Numbers / number helpers",
+          "selects": "Selects / dropdown helpers",
+          "datetimes": "Date / Time / helpers"
         }
       },
       "energy": {
@@ -86,7 +89,8 @@
       }
     },
     "error": {
-      "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line)."
+      "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line).",
+      "invalid_editable_entities": "Choose compatible Number, Select or Date/Time entities."
     }
   },
   "entity": {

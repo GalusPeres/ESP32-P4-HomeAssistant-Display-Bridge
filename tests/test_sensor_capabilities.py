@@ -60,6 +60,7 @@ class SensorCapabilitiesTest(unittest.IsolatedAsyncioTestCase):
     async def test_actual_configuration_feedback_upgrades_once_and_preserves_legacy_fields(self):
         constants = vars(load_module("const"))
         scope = dict(constants)
+        scope.update(vars(load_module("editable_helpers")))
         scope.update({
             "CAPABILITIES": "capabilities",
             "normalise_capabilities": CAPS.normalise_capabilities,

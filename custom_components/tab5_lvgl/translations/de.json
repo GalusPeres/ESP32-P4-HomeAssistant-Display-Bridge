@@ -72,7 +72,10 @@
           "covers": "Abdeckungen / Rolll\u00e4den",
           "cameras": "Kameras",
           "scene_entities": "Szenen / Skripte / Buttons",
-          "scene_map_text": "Aktions-Alias"
+          "scene_map_text": "Aktions-Alias",
+          "numbers": "Zahlenwerte / Zahlenhelfer",
+          "selects": "Auswahl / Auswahlhelfer",
+          "datetimes": "Datum / Uhrzeit / Helfer"
         }
       },
       "energy": {
@@ -86,7 +89,8 @@
       }
     },
     "error": {
-      "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias)."
+      "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias).",
+      "invalid_editable_entities": "Bitte passende Zahlen-, Auswahl- oder Datum-/Uhrzeit-Entit\u00e4ten ausw\u00e4hlen."
     }
   },
   "entity": {

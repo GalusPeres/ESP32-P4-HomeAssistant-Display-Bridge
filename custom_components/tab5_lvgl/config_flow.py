@@ -21,7 +21,9 @@ from homeassistant.helpers.network import get_url
 
 from .binary_sensor_helpers import split_binary_sensor_entities
 from .control_helpers import ACTION_DOMAINS, SWITCH_DOMAINS, build_action_map, entity_domain
+from .editable_helpers import (EDITABLE_LISTS, EDITABLE_DOMAINS, NUMBER_DOMAINS, SELECT_DOMAINS, DATETIME_DOMAINS, editable_selection, domain_of, build_editable_payload, build_editable_service_call, add_number_history, MAX_CONTROL_BYTES)
 from .const import (
+  CONF_NUMBERS, CONF_SELECTS, CONF_DATETIMES,
   CONF_BASE_TOPIC,
   CONF_BINARY_SENSORS,
   CONF_CAMERAS,
@@ -319,6 +321,7 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         shared_keys = (
           "user_sensor_selections",
           CONF_SENSORS, CONF_BINARY_SENSORS, CONF_WEATHERS, CONF_LIGHTS, CONF_SWITCHES,
+          CONF_NUMBERS, CONF_SELECTS, CONF_DATETIMES,
           CONF_CLIMATES, CONF_COVERS,
           CONF_MEDIA_PLAYERS, CONF_CAMERAS, CONF_SCENE_MAP, CONF_SCENE_MAP_TEXT,
         )
@@ -340,6 +343,15 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         ),
         vol.Optional(CONF_BINARY_SENSORS, default=merged.get(CONF_BINARY_SENSORS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(domain=["binary_sensor"], multiple=True)
+        ),
+        vol.Optional(CONF_NUMBERS, default=merged.get(CONF_NUMBERS, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=list(NUMBER_DOMAINS), multiple=True)
+        ),
+        vol.Optional(CONF_SELECTS, default=merged.get(CONF_SELECTS, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=list(SELECT_DOMAINS), multiple=True)
+        ),
+        vol.Optional(CONF_DATETIMES, default=merged.get(CONF_DATETIMES, [])): selector.EntitySelector(
+          selector.EntitySelectorConfig(domain=list(DATETIME_DOMAINS), multiple=True)
         ),
         vol.Optional(CONF_WEATHERS, default=merged.get(CONF_WEATHERS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(domain=["weather"], multiple=True)
@@ -444,6 +456,9 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
   all_switches = list(current.get(CONF_SWITCHES, []))
   all_media_players = list(current.get(CONF_MEDIA_PLAYERS, []))
   all_climates = list(current.get(CONF_CLIMATES, []))
+  all_numbers = list(current.get(CONF_NUMBERS, []))
+  all_selects = list(current.get(CONF_SELECTS, []))
+  all_datetimes = list(current.get(CONF_DATETIMES, []))
   all_covers = list(current.get(CONF_COVERS, []))
   all_cameras = list(current.get(CONF_CAMERAS, []))
   all_scene_ids = list((current.get(CONF_SCENE_MAP) or {}).values())
@@ -471,6 +486,9 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
     all_switches.extend(list(data.get(CONF_SWITCHES, [])))
     all_media_players.extend(list(data.get(CONF_MEDIA_PLAYERS, [])))
     all_climates.extend(list(data.get(CONF_CLIMATES, [])))
+    all_numbers.extend(list(data.get(CONF_NUMBERS, [])))
+    all_selects.extend(list(data.get(CONF_SELECTS, [])))
+    all_datetimes.extend(list(data.get(CONF_DATETIMES, [])))
     all_covers.extend(list(data.get(CONF_COVERS, [])))
     all_cameras.extend(list(data.get(CONF_CAMERAS, [])))
     all_scene_ids.extend(list((data.get(CONF_SCENE_MAP) or {}).values()))
@@ -483,6 +501,9 @@ def _merge_all_entities(hass, current: Dict[str, Any]) -> Dict[str, Any]:
     CONF_SWITCHES: _unique(all_switches),
     CONF_MEDIA_PLAYERS: _unique(all_media_players),
     CONF_CLIMATES: _unique(all_climates),
+    CONF_NUMBERS: _unique(all_numbers),
+    CONF_SELECTS: _unique(all_selects),
+    CONF_DATETIMES: _unique(all_datetimes),
     CONF_COVERS: _unique(all_covers),
     CONF_CAMERAS: _unique(all_cameras),
     CONF_SCENE_ENTITIES: _unique(all_scene_ids),
@@ -525,6 +546,8 @@ def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) ->
   updated[CONF_SWITCHES] = switches
   updated[CONF_MEDIA_PLAYERS] = media_players
   updated[CONF_CLIMATES] = climates
+  for key, domains in EDITABLE_LISTS.items():
+    updated[key] = editable_selection(user_input.get(key, current.get(key, [])), domains)
   updated[CONF_COVERS] = covers
   updated[CONF_CAMERAS] = cameras
   updated[CONF_SCENE_MAP] = scene_map
