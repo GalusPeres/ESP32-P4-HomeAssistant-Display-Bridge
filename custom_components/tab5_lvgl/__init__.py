@@ -3496,6 +3496,9 @@ class Tab5Bridge:
     """Publish only the icon map; lightweight, no full config push."""
     if not self.icons_topic:
       return
+    # Entities and registry overrides may become available after startup without
+    # a state event. Never follow a fresh config with an older empty icon map.
+    self._prime_icon_cache()
     payload = json.dumps(self._icon_cache)
     await mqtt.async_publish(self.hass, self.icons_topic, payload, qos=0, retain=False)
 
