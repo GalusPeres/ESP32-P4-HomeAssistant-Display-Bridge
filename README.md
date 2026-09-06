@@ -53,8 +53,29 @@ Detailed instructions: [bridge documentation](https://galusperes.github.io/HomeT
 Configure via the Home Assistant UI:
 
 - **Panel Settings** - MQTT base topic, HA prefix, device metadata
-- **Entity Configuration** - Sensors, binary sensors, weather, lights, switches, covers, climate devices, media players, scenes
+- **Entity Configuration** - Sensors, binary sensors, weather, lights, switchable entities, covers, climate devices, media players, scenes/scripts/buttons
 - **Energy Dashboard** - Electricity, gas and water from the HA Energy Dashboard
+
+### Compatible Switch and Scene entities (v0.6.42)
+
+Select the entity in **Entity Configuration**, then assign it to an existing tile in HomeTiles Web Admin. No extra tile type or popup is needed.
+
+| Existing tile | Home Assistant domain | Action |
+|---|---|---|
+| Switch | `light`, `switch` | On/off; lights keep their supported brightness/color controls |
+| Switch | `input_boolean` | Set a Toggle helper on/off |
+| Switch | `automation` | Enable/disable triggers; turning off also stops running actions by HA default |
+| Switch | `fan`, `humidifier`, `remote`, `siren` | On/off with the entity's configured defaults |
+| Scene | `scene`, `script` | Activate the scene / start the script without additional fields |
+| Scene | `button`, `input_button` | Press once |
+
+Switch-compatible domains appear under **Switches / switchable entities**; lights retain their own selector. Actions appear under **Scenes / Scripts / Buttons**. Fan and Siren require both HA on/off feature flags; an unsupported entity is disabled. The existing on/off popup is used for non-light entities. Fan speed, humidity targets, remote commands/activities and siren tones are outside this tile's controls.
+
+Automation on/off does not trigger its actions immediately. Use an HA script with defaults for actions that need parameters. Read-only `binary_sensor` and `event` entities cannot be switched or pressed. Locks, alarms, vacuums, valves and update entities have different service semantics; Cover, Climate and Media keep their existing dedicated tiles. See HA's [automation actions](https://www.home-assistant.io/docs/automation/services/), [button](https://www.home-assistant.io/integrations/button/), [input button](https://www.home-assistant.io/integrations/input_button/), [fan features](https://developers.home-assistant.io/docs/core/entity/fan/) and [siren features](https://developers.home-assistant.io/docs/core/entity/siren/).
+
+Existing selections, aliases and topic names remain valid. The new firmware adds translated editor labels and propagates availability through all Switch tiles/popups. Ordinary `switch.*` on/off state payloads retain their legacy format; additional switch domains use the already supported `state`/`available` JSON shape. Unavailable or missing actions are ignored, while never-pressed buttons with an unknown timestamp remain usable. All switch/action commands must resolve to configured entities and use a fixed service allow-list. Retained commands are ignored after restart or reconnect.
+
+Aliases remain stable when you reorder selections or add another domain with the same object name. Custom aliases still use `alias=entity_id` lines. Fresh setup and existing configurations use the same compatible selectors; no new configuration list is required.
 
 ## MQTT Topics
 
@@ -70,11 +91,11 @@ The integration communicates with the display firmware via MQTT:
 | `tab5_lvgl/config/{id}/weather/*` | Bidirectional | Weather forecast request/response |
 | `tab5_lvgl/config/{id}/energy/*` | Bidirectional | Energy data request/response |
 | `base_topic/cmnd/light` | Display > HA | Light control commands |
-| `base_topic/cmnd/switch` | Display > HA | Switch control commands |
+| `base_topic/cmnd/switch` | Display > HA | Compatible on/off control commands |
 | `base_topic/cmnd/media` | Display > HA | Media player commands |
 | `base_topic/cmnd/climate` | Display > HA | Climate temperature and HVAC mode commands |
 | `base_topic/cmnd/cover` | Display > HA | Cover position, tilt, open, close and stop commands |
-| `base_topic/cmnd/scene` | Display > HA | Scene activation |
+| `base_topic/cmnd/scene` | Display > HA | Scene/script activation or button press |
 | `base_topic/cmnd/camera` | Display > HA | Open or close an experimental camera stream |
 | `base_topic/stat/camera` | HA > Display | Camera stream endpoint, protocol and status |
 | `base_topic/cmnd/display_brightness` | HA > Display | Set normal display brightness (1-100%) |

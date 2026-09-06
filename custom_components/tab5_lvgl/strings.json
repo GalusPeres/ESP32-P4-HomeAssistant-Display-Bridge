@@ -60,19 +60,19 @@
       },
       "entities": {
         "title": "Entity-Konfiguration",
-        "description": "Gilt f\u00fcr alle Panels. \u00c4nderungen hier wirken sich auf jedes verbundene Ger\u00e4t aus.",
+        "description": "Gilt f\u00fcr alle Displays. Schaltbare Entit\u00e4ten: Switch, Input Boolean, Automation, Fan, Humidifier, Remote und Siren. Automationen werden aktiviert/deaktiviert. Szenen und Skripte werden gestartet, Buttons und Input Buttons einmal gedr\u00fcckt.",
         "data": {
           "sensors": "Sensoren",
           "binary_sensors": "Bin\u00e4rsensoren",
           "weathers": "Wetter",
           "lights": "Lichter",
-          "switches": "Schalter",
+          "switches": "Schalter / schaltbare Entit\u00e4ten",
           "media_players": "Media Player",
           "climates": "Klima / Heizung",
           "covers": "Abdeckungen / Rolll\u00e4den",
           "cameras": "Kameras",
-          "scene_entities": "Szenen / Scripts",
-          "scene_map_text": "Szenen- / Script-Alias"
+          "scene_entities": "Szenen / Skripte / Buttons",
+          "scene_map_text": "Aktions-Alias"
         }
       },
       "energy": {

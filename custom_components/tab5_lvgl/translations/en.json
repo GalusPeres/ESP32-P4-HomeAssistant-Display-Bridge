@@ -60,19 +60,19 @@
       },
       "entities": {
         "title": "Entity configuration",
-        "description": "Applies to all panels. Changes here affect every connected device.",
+        "description": "Applies to all displays. Switchable entities: switch, input_boolean, automation, fan, humidifier, remote and siren. Automations are enabled/disabled. Scenes and scripts are started; buttons and input buttons are pressed once.",
         "data": {
           "sensors": "Sensors",
           "binary_sensors": "Binary sensors",
           "weathers": "Weather",
           "lights": "Lights",
-          "switches": "Switches",
+          "switches": "Switches / switchable entities",
           "media_players": "Media players",
           "climates": "Climate devices",
           "covers": "Covers",
           "cameras": "Cameras",
-          "scene_entities": "Scenes / Scripts",
-          "scene_map_text": "Scene / Script aliases"
+          "scene_entities": "Scenes / Scripts / Buttons",
+          "scene_map_text": "Action aliases"
         }
       },
       "energy": {

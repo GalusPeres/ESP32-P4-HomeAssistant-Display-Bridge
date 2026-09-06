@@ -20,6 +20,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import get_url
 
 from .binary_sensor_helpers import split_binary_sensor_entities
+from .control_helpers import ACTION_DOMAINS, SWITCH_DOMAINS, build_action_map, entity_domain
 from .const import (
   CONF_BASE_TOPIC,
   CONF_BINARY_SENSORS,
@@ -347,7 +348,7 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
           selector.EntitySelectorConfig(domain=["light"], multiple=True)
         ),
         vol.Optional(CONF_SWITCHES, default=merged.get(CONF_SWITCHES, [])): selector.EntitySelector(
-          selector.EntitySelectorConfig(domain=["switch"], multiple=True)
+          selector.EntitySelectorConfig(domain=list(SWITCH_DOMAINS), multiple=True)
         ),
         vol.Optional(CONF_MEDIA_PLAYERS, default=merged.get(CONF_MEDIA_PLAYERS, [])): selector.EntitySelector(
           selector.EntitySelectorConfig(domain=["media_player"], multiple=True)
@@ -362,7 +363,7 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
           selector.EntitySelectorConfig(domain=["camera"], multiple=True)
         ),
         vol.Optional(CONF_SCENE_ENTITIES, default=merged.get(CONF_SCENE_ENTITIES, [])): selector.EntitySelector(
-          selector.EntitySelectorConfig(domain=["scene", "script"], multiple=True)
+          selector.EntitySelectorConfig(domain=list(ACTION_DOMAINS), multiple=True)
         ),
         vol.Optional(CONF_SCENE_MAP_TEXT, default=merged.get(CONF_SCENE_MAP_TEXT, "")): selector.TextSelector(
           selector.TextSelectorConfig(multiline=True)
@@ -508,23 +509,10 @@ def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) ->
   covers = _normalise_entity_list(user_input.get(CONF_COVERS, []))
   cameras = _normalise_entity_list(user_input.get(CONF_CAMERAS, []))
 
-  scene_map = {}
   selected_scenes = _normalise_entity_list(user_input.get(CONF_SCENE_ENTITIES, []))
-  for entity_id in selected_scenes:
-    entity_id = (entity_id or "").strip()
-    if not entity_id:
-      continue
-    alias = entity_id.split(".", 1)[-1].replace("scene.", "").lower()
-    base_alias = alias
-    idx = 2
-    while alias in scene_map:
-      alias = f"{base_alias}{idx}"
-      idx += 1
-    scene_map[alias] = entity_id
-
   scene_map_text = user_input.get(CONF_SCENE_MAP_TEXT, "").strip("\n")
   manual_map = _parse_scene_map(scene_map_text)
-  scene_map.update(manual_map)
+  scene_map = build_action_map(selected_scenes, manual_map, current.get(CONF_SCENE_MAP) or {})
 
   updated = dict(current)
   updated.pop("energy_enabled", None)  # remove old single checkbox
@@ -569,7 +557,7 @@ def _parse_scene_map(text: str) -> Dict[str, str]:
     alias, entity = line.split("=", 1)
     alias = alias.strip().lower()
     entity = entity.strip()
-    if not alias or not entity:
+    if not alias or entity_domain(entity) not in ACTION_DOMAINS:
       raise ValueError("invalid_scene_map")
     mapping[alias] = entity
   return mapping

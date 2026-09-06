@@ -78,6 +78,15 @@ from .binary_sensor_helpers import (
   migrate_binary_sensor_config,
   split_binary_sensor_entities,
 )
+from .control_helpers import (
+  SWITCH_DOMAINS,
+  build_action_service_call,
+  build_switch_service_call,
+  build_switch_state_payload,
+  entity_domain,
+  resolve_action_entity,
+  resolve_control_entity,
+)
 from .state_history import (
   STATE_HISTORY_KIND,
   STATE_HISTORY_MAX_RESPONSE_BYTES,
@@ -1176,7 +1185,7 @@ class Tab5Bridge:
     self.covers = merged["covers"]
     self.cameras = merged["cameras"]
     self.weathers = merged["weathers"]
-    self.scene_map.update(merged["scene_map"])
+    self.scene_map = dict(merged["scene_map"])
     self.tracked_entities = _unique_entities(
       self.sensors
       + self.binary_sensors
@@ -1186,6 +1195,7 @@ class Tab5Bridge:
       + self.climates
       + self.covers
       + self.weathers
+      + list(self.scene_map.values())
     )
     if self._runtime_setup_complete and tuple(self.tracked_entities) != previous_tracked:
       if self._unsub_state:
@@ -1449,6 +1459,8 @@ class Tab5Bridge:
       if not state:
         if entity_id in self.binary_sensors:
           await self._async_publish_binary_sensor_absent_state(entity_id)
+        elif entity_id in self.switches:
+          await self._async_publish_switch_absent_state(entity_id)
         continue
       await self._async_publish_entity_state(entity_id, state)
 
@@ -1467,6 +1479,17 @@ class Tab5Bridge:
       ),
       qos=0,
       retain=True,
+    )
+
+  async def _async_publish_switch_absent_state(self, entity_id: str) -> None:
+    """Clear retained on/off state after removal, including during startup."""
+    if entity_id not in self.switches or not self._owns_state_publish(entity_id):
+      return
+    await mqtt.async_publish(
+      self.hass, self._ha_topic_for_entity(entity_id, "state"),
+      ("unavailable" if entity_domain(entity_id) == "switch" else
+       json.dumps(build_switch_state_payload(entity_id, None, {}))),
+      qos=0, retain=True,
     )
 
   async def _async_build_state_payload(
@@ -2791,27 +2814,22 @@ class Tab5Bridge:
       await self._async_publish_weather_state(weather_entity, state, retain=True)
 
   async def _async_handle_scene_command(self, msg: ReceiveMessage) -> None:
-    """Execute scene/script commands originating from the Tab5."""
+    """Run a configured scene/script or press a configured button."""
+    if getattr(msg, "retain", False):
+      return
     payload = msg.payload.strip()
     if not payload:
       return
-
-    entity_id: Optional[str]
-    if payload.startswith("scene.") or payload.startswith("script."):
-      entity_id = payload
-    else:
-      entity_id = self.scene_map.get(payload.lower())
-
-    if not entity_id:
-      _LOGGER.warning("Unhandled scene command from Tab5: %s", payload)
+    entity_id = resolve_action_entity(payload, self.scene_map)
+    call = build_action_service_call(
+      payload, self.scene_map, self.hass.states.get(entity_id) if entity_id else None,
+    )
+    if not call:
+      _LOGGER.debug("Ignoring unsupported or unavailable HomeTiles action: %s", payload)
       return
-
-    domain = entity_id.split(".")[0]
+    domain, service, service_data = call
     await self.hass.services.async_call(
-      domain,
-      "turn_on",
-      {"entity_id": entity_id},
-      blocking=False,
+      domain, service, service_data, blocking=False,
     )
 
   async def _async_handle_light_command(self, msg: ReceiveMessage) -> None:
@@ -2879,7 +2897,9 @@ class Tab5Bridge:
     )
 
   async def _async_handle_switch_command(self, msg: ReceiveMessage) -> None:
-    """Execute switch commands originating from the Tab5."""
+    """Execute on/off commands for configured switch-compatible entities."""
+    if getattr(msg, "retain", False):
+      return
     payload = msg.payload.strip()
     if not payload:
       return
@@ -2903,7 +2923,7 @@ class Tab5Bridge:
       if command is None:
         command = parsed_command
 
-    entity_id = self._resolve_target_entity(entity_id, self.switches)
+    entity_id = resolve_control_entity(entity_id, self.switches)
     if not entity_id:
       _LOGGER.warning("Unhandled switch command from Tab5 (unknown entity): %s", msg.payload)
       return
@@ -2913,12 +2933,15 @@ class Tab5Bridge:
       _LOGGER.warning("Unhandled switch command from Tab5: %s", msg.payload)
       return
 
-    service = "toggle" if command == "toggle" else "turn_on" if command == "on" else "turn_off"
+    call = build_switch_service_call(
+      entity_id, command, self.switches, self.hass.states.get(entity_id),
+    )
+    if not call:
+      _LOGGER.debug("Ignoring unsupported or unavailable HomeTiles switch: %s", entity_id)
+      return
+    domain, service, service_data = call
     await self.hass.services.async_call(
-      "switch",
-      service,
-      {"entity_id": entity_id},
-      blocking=False,
+      domain, service, service_data, blocking=False,
     )
 
   async def _async_handle_climate_command(self, msg: ReceiveMessage) -> None:
@@ -3253,6 +3276,8 @@ class Tab5Bridge:
         self.hass.async_create_task(
           self._async_publish_binary_sensor_absent_state(entity_id)
         )
+      elif entity_id in self.switches:
+        self.hass.async_create_task(self._async_publish_switch_absent_state(entity_id))
       return
 
     self.hass.async_create_task(self._async_publish_entity_state(entity_id, new_state))
@@ -3482,6 +3507,11 @@ class Tab5Bridge:
       return json.dumps(_extract_media_player_payload(state, self.hass), default=str)
     if entity_id.startswith("sensor."):
       return sensor_live_state_payload(state)
+    # Preserve the established wire format for existing switch entities.
+    if entity_domain(entity_id) == "switch" and state.state in ("on", "off", "unavailable"):
+      return state.state
+    if entity_domain(entity_id) in SWITCH_DOMAINS:
+      return json.dumps(build_switch_state_payload(entity_id, state.state, state.attributes or {}))
     return state.state.replace(",", ".")
 
   async def _async_publish_weather_state(self, entity_id: str, state: State, retain: bool = True) -> None:
