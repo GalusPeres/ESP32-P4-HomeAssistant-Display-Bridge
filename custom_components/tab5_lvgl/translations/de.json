@@ -88,5 +88,20 @@
     "error": {
       "invalid_scene_map": "Alias muss dem Muster alias=entity_id folgen (eine Zeile pro Alias)."
     }
+  },
+  "entity": {
+    "select": {
+      "view": {
+        "name": "Ansicht"
+      }
+    }
+  },
+  "exceptions": {
+    "view_unavailable": {
+      "message": "Das Display ist offline oder seine Ansichtsliste ist noch nicht bereit."
+    },
+    "invalid_view": {
+      "message": "Die gew\u00e4hlte Ansicht existiert nicht mehr."
+    }
   }
 }

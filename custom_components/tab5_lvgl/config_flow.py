@@ -316,6 +316,7 @@ class Tab5OptionsFlowHandler(config_entries.OptionsFlow):
         # einem device_id-Wechsel), war die gesamte Auswahl ersatzlos weg.
         # Auf allen Eintraegen spiegeln, wie es async_step_energy schon tut.
         shared_keys = (
+          "user_sensor_selections",
           CONF_SENSORS, CONF_BINARY_SENSORS, CONF_WEATHERS, CONF_LIGHTS, CONF_SWITCHES,
           CONF_CLIMATES, CONF_COVERS,
           CONF_MEDIA_PLAYERS, CONF_CAMERAS, CONF_SCENE_MAP, CONF_SCENE_MAP_TEXT,
@@ -528,6 +529,7 @@ def _convert_entity_data(user_input: Dict[str, Any], current: Dict[str, Any]) ->
   updated = dict(current)
   updated.pop("energy_enabled", None)  # remove old single checkbox
   updated.pop("energy_enabled", None)  # remove old single checkbox
+  updated["user_sensor_selections"] = list(sensors)
   updated[CONF_SENSORS] = sensors
   updated[CONF_BINARY_SENSORS] = binary_sensors
   updated[CONF_WEATHERS] = weathers

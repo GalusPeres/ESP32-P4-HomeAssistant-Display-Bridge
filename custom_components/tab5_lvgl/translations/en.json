@@ -88,5 +88,20 @@
     "error": {
       "invalid_scene_map": "Aliases must follow the pattern alias=entity_id (one per line)."
     }
+  },
+  "entity": {
+    "select": {
+      "view": {
+        "name": "View"
+      }
+    }
+  },
+  "exceptions": {
+    "view_unavailable": {
+      "message": "The display is offline or its view catalog is not ready."
+    },
+    "invalid_view": {
+      "message": "The selected view no longer exists."
+    }
   }
 }

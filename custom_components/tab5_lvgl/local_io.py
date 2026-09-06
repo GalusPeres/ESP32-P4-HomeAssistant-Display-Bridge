@@ -170,6 +170,8 @@ def entry_local_io(entry: ConfigEntry) -> list[dict[str, Any]]:
     data = dict(entry.data or {})
     if entry.options:
         data.update(entry.options)
+    if CONF_LOCAL_IO in (entry.data or {}):
+        data[CONF_LOCAL_IO] = entry.data[CONF_LOCAL_IO]
     try:
         return normalise_local_io(data.get(CONF_LOCAL_IO))
     except ValueError:

@@ -9,7 +9,8 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_HA_PREFIX, CONF_LOCAL_IO, DEFAULT_PREFIX, TOPIC_SENSOR_SOC
+from .capabilities import merged_capabilities_data, supports
+from .const import CONF_HA_PREFIX, DEFAULT_PREFIX, TOPIC_SENSOR_SOC
 from .device_helpers import (
     entry_base_topic,
     entry_device_id,
@@ -34,12 +35,12 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
 ) -> None:
     base_topic = entry_base_topic(entry)
-    merged = dict(entry.data or {})
-    if entry.options:
-        merged.update(entry.options)
+    merged = merged_capabilities_data(entry)
     ha_prefix = normalise_topic(merged.get(CONF_HA_PREFIX), DEFAULT_PREFIX)
-    entities = [Tab5BatterySensor(entry, base_topic)]
-    if CONF_LOCAL_IO not in merged:
+    entities = []
+    if supports(merged, "battery_soc"):
+        entities.append(Tab5BatterySensor(entry, base_topic))
+    if supports(merged, "legacy_external_temperature"):
         # Legacy firmware exposed one fixed external sensor on the HA prefix.
         # New firmware announces every channel through local_io, including an
         # explicit empty list, so creating both would leave a duplicate entity.

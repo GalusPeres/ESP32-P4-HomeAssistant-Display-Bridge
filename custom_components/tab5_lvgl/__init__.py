@@ -144,6 +144,12 @@ from .camera_stream import (
 )
 from .device_helpers import entry_device_id, entry_device_info, entry_device_name
 from .device_registry_helpers import is_stale_device_entry
+from .capabilities import (
+  CAPABILITIES,
+  merged_capabilities_data,
+  normalise_capabilities,
+  stale_internal_sensor,
+)
 from .local_io import (
   LOCAL_IO_RELAY,
   LOCAL_IO_TEMPERATURE,
@@ -156,7 +162,6 @@ from .local_io import (
   normalise_local_io,
 )
 from .sensor_selection import (
-  INTERNAL_SENSOR_ENTITY_ID_TARGETS,
   clean_stored_sensor_selections,
   filter_runtime_sensor_entities,
   runtime_sensor_entity_id_candidates,
@@ -394,7 +399,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   if dev_info.get("model"):
     kwargs["model"] = dev_info["model"]
   device_reg.async_get_or_create(**kwargs)
-  _cleanup_persisted_runtime_sensor_entities(hass, entry)
+  for sensor_entry in hass.config_entries.async_entries(DOMAIN):
+    _cleanup_persisted_runtime_sensor_entities(hass, sensor_entry)
   # Der Entry-Titel wird sonst nur einmal bei der Ersterstellung gesetzt und
   # danach nie wieder - anders als der Geraetename oben, der bei jedem Setup
   # frisch berechnet wird. Ohne diesen Abgleich laufen beide Namen auseinander
@@ -404,7 +410,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.config_entries.async_update_entry(entry, title=dev_info["name"])
   _remove_stale_local_io_entities(hass, entry)
   _migrate_local_io_entity_ids(hass, entry)
-  _migrate_internal_sensor_entity_ids(hass, entry)
   bridge = Tab5Bridge(hass, entry)
   await bridge.async_setup()
   hass.data[DOMAIN]["entries"][entry.entry_id] = bridge
@@ -439,6 +444,32 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
   return True
 
 
+def _preserved_user_sensor_ids(hass: HomeAssistant, entry: ConfigEntry | None,
+                               incoming_data: Dict[str, Any] | None = None) -> set[str]:
+  """Preserve explicit selections unless their owning panel removes support."""
+  if entry is None:
+    return set()
+  protected = set((entry.data or {}).get("user_sensor_selections", []))
+  registry = er.async_get(hass)
+  for owner in hass.config_entries.async_entries(DOMAIN):
+    data = merged_capabilities_data(owner)
+    if owner.entry_id == entry.entry_id and incoming_data:
+      data.update(incoming_data)
+    expected = {local_io_unique_id(entry_device_id(owner), item)
+                for item in data.get(CONF_LOCAL_IO, entry_local_io(owner))}
+    for entity_id in tuple(protected):
+      entity = registry.async_get(entity_id)
+      if (entity is None or entity.platform != DOMAIN or entity.domain != "sensor"
+          or entity.config_entry_id != owner.entry_id):
+        continue
+      unique_id = entity.unique_id or ""
+      obsolete = (unique_id not in expected if "_local_io_" in unique_id
+                  else stale_internal_sensor(unique_id, data))
+      if obsolete:
+        protected.remove(entity_id)
+  return protected
+
+
 def _runtime_managed_sensor_entity_ids(
   hass: HomeAssistant,
   entry: ConfigEntry | None,
@@ -446,6 +477,7 @@ def _runtime_managed_sensor_entity_ids(
 ) -> set[str]:
   """Resolve exact sensor IDs that the integration adds at runtime."""
   registry = er.async_get(hass)
+  protected = _preserved_user_sensor_ids(hass, entry, incoming_data)
   owned_entity_ids: set[str] = set()
   device_labels: List[str] = []
   announced_entity_ids: set[str] = set()
@@ -518,6 +550,8 @@ def _runtime_managed_sensor_entity_ids(
   result: set[str] = set()
   for entity_id in candidates:
     registry_entry = registry.async_get(entity_id)
+    if entity_id in protected:
+      continue
     if registry_entry is None:
       result.add(entity_id)
       continue
@@ -535,12 +569,26 @@ def _cleanup_persisted_runtime_sensor_entities(
   entry: ConfigEntry,
 ) -> None:
   """Repair sensor selections affected by the firmware feedback loop."""
-  runtime_entity_ids = _runtime_managed_sensor_entity_ids(hass, entry)
+  runtime_entity_ids = set()
+  for owner in hass.config_entries.async_entries(DOMAIN):
+    runtime_entity_ids.update(_runtime_managed_sensor_entity_ids(hass, owner))
+  protected = _preserved_user_sensor_ids(hass, entry)
+  runtime_entity_ids.difference_update(protected)
   data, options, data_changed, options_changed, removed_count = (
     clean_stored_sensor_selections(
       entry.data, entry.options, CONF_SENSORS, runtime_entity_ids
     )
   )
+  for storage, is_options in ((data, False), (options, True)):
+    selected = storage.get("user_sensor_selections")
+    if selected is not None:
+      cleaned = [entity_id for entity_id in selected if entity_id in protected]
+      if cleaned != selected:
+        storage["user_sensor_selections"] = cleaned
+        if is_options:
+          options_changed = True
+        else:
+          data_changed = True
   if not data_changed and not options_changed:
     return
 
@@ -557,55 +605,10 @@ def _cleanup_persisted_runtime_sensor_entities(
   )
 
 
-def _migrate_internal_sensor_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> None:
-  """Normalize legacy internal sensor entity IDs to stable IDs.
-
-  Only runs when there is a single config entry to avoid collisions
-  between multiple devices.
-  """
-  if len(hass.config_entries.async_entries(DOMAIN)) > 1:
-    return
-  registry = er.async_get(hass)
-  for reg_entry in list(registry.entities.values()):
-    if reg_entry.config_entry_id != entry.entry_id:
-      continue
-    if reg_entry.domain != "sensor":
-      continue
-    unique_id = (reg_entry.unique_id or "").strip().lower()
-    if not unique_id:
-      continue
-
-    target_entity_id = None
-    for suffix, target in INTERNAL_SENSOR_ENTITY_ID_TARGETS:
-      if unique_id.endswith(suffix):
-        target_entity_id = target
-        break
-
-    if not target_entity_id:
-      continue
-    if reg_entry.entity_id == target_entity_id:
-      continue
-    if registry.async_get(target_entity_id) is not None:
-      continue
-
-    try:
-      registry.async_update_entity(reg_entry.entity_id, new_entity_id=target_entity_id)
-      _LOGGER.info("Tab5 entity migration: %s -> %s", reg_entry.entity_id, target_entity_id)
-    except (ValueError, TypeError) as err:
-      _LOGGER.warning(
-        "Tab5 entity migration failed for %s -> %s: %s",
-        reg_entry.entity_id,
-        target_entity_id,
-        err,
-      )
-
-
 def _remove_stale_local_io_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
   """Remove registry entries for channels no longer announced by firmware."""
   device_id = entry_device_id(entry)
-  merged = dict(entry.data or {})
-  if entry.options:
-    merged.update(entry.options)
+  merged = merged_capabilities_data(entry)
   local_io_announced = CONF_LOCAL_IO in merged
   legacy_temperature_id = f"{device_id}_external_temperature"
   expected = {
@@ -615,13 +618,16 @@ def _remove_stale_local_io_entities(hass: HomeAssistant, entry: ConfigEntry) -> 
   registry = er.async_get(hass)
   stale: List[str] = []
   for entity in registry.entities.values():
-    if entity.config_entry_id != entry.entry_id:
+    if entity.config_entry_id != entry.entry_id or entity.platform != DOMAIN:
       continue
     unique_id = entity.unique_id or ""
     # Match by the integration-owned delimiter rather than only the current
     # device ID. The fallback adoption path may replace a provisional device
     # ID; entities created under that old ID must not remain as registry orphans.
-    if "_local_io_" in unique_id and unique_id not in expected:
+    if (entity.domain == "sensor" and "_local_io_" not in unique_id
+        and stale_internal_sensor(unique_id, merged)):
+      stale.append(entity.entity_id)
+    elif "_local_io_" in unique_id and unique_id not in expected:
       stale.append(entity.entity_id)
     elif local_io_announced and (
       unique_id == legacy_temperature_id
@@ -1380,6 +1386,7 @@ class Tab5Bridge:
           "base_topic": self.base_topic,
           "ha_prefix": self.ha_prefix,
           "sensors": self.sensors,
+          "configured_sensors": self._configured_sensors,
           "sensor_meta": self._build_sensor_meta(),
           CONF_BINARY_SENSORS: self.binary_sensors,
           "binary_sensor_meta": self._build_binary_sensor_meta(),
@@ -4611,7 +4618,7 @@ async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, A
   try:
     data = _payload_to_entry_data(payload)
   except ValueError as err:
-    _LOGGER.warning("Tab5 LVGL: Konfigurationspayload ignoriert (%s)", err)
+    _LOGGER.warning("HomeTiles Bridge ignored configuration payload (%s)", err)
     return
 
   device_id = data.get(CONF_DEVICE_ID)
@@ -4661,6 +4668,9 @@ async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, A
     if CONF_LOCAL_IO in data and existing.get(CONF_LOCAL_IO) != data[CONF_LOCAL_IO]:
       existing[CONF_LOCAL_IO] = data[CONF_LOCAL_IO]
       changed = True
+    if CAPABILITIES in data and existing.get(CAPABILITIES) != data[CAPABILITIES]:
+      existing[CAPABILITIES] = data[CAPABILITIES]
+      changed = True
     if changed:
       if removed_count:
         _LOGGER.info(
@@ -4668,7 +4678,7 @@ async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, A
           removed_count,
           entry.entry_id,
         )
-      _LOGGER.info("Tab5 LVGL: Geraeteinfo fuer bestehende Bridge %s nachgetragen", device_id)
+      _LOGGER.info("HomeTiles Bridge updated device metadata for %s", device_id)
       # The integration's regular update listener reloads the entry, so new or
       # removed local-I/O platform entities appear without a manual restart.
       update: Dict[str, Any] = {"data": existing}
@@ -4687,10 +4697,13 @@ async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, A
     if CONF_LOCAL_IO in data and new_data.get(CONF_LOCAL_IO) != data[CONF_LOCAL_IO]:
       new_data[CONF_LOCAL_IO] = data[CONF_LOCAL_IO]
       changed = True
+    if CAPABILITIES in data and new_data.get(CAPABILITIES) != data[CAPABILITIES]:
+      new_data[CAPABILITIES] = data[CAPABILITIES]
+      changed = True
     if not changed:
       return
 
-    _LOGGER.info("Tab5 LVGL: verknuepfe Bridge %s mit bestehender Integration", device_id)
+    _LOGGER.info("HomeTiles Bridge adopted device %s into the existing entry", device_id)
     hass.config_entries.async_update_entry(
       fallback,
       data=new_data,
@@ -4700,7 +4713,7 @@ async def _async_process_bridge_config(hass: HomeAssistant, payload: Dict[str, A
     await hass.config_entries.async_reload(fallback.entry_id)
     return
 
-  _LOGGER.info("Tab5 LVGL: neue Bridge entdeckt (%s) - erstelle Integration", device_id)
+  _LOGGER.info("HomeTiles Bridge discovered device %s; creating entry", device_id)
   data[CONF_SENSORS] = filter_runtime_sensor_entities(
     data.get(CONF_SENSORS, []),
     _runtime_managed_sensor_entity_ids(hass, None, data),
@@ -4722,7 +4735,7 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
   base = _normalise_topic(payload.get("base_topic"), DEFAULT_BASE)
   prefix = _normalise_topic(payload.get("ha_prefix"), DEFAULT_PREFIX)
 
-  sensors_raw = payload.get("sensors") or []
+  sensors_raw = payload.get("configured_sensors", payload.get("sensors")) or []
   if not isinstance(sensors_raw, list):
     raise ValueError("invalid_sensors")
   sensors = [str(item).strip() for item in sensors_raw if str(item).strip()]
@@ -4811,6 +4824,8 @@ def _payload_to_entry_data(payload: Dict[str, Any]) -> Dict[str, Any]:
     data[CONF_MODEL] = model
   if device_name:
     data[CONF_DEVICE_NAME] = device_name
+  if CAPABILITIES in payload:
+    data[CAPABILITIES] = normalise_capabilities(payload[CAPABILITIES])
   if CONF_LOCAL_IO in payload:
     local_io_raw = payload.get(CONF_LOCAL_IO)
     if local_io_raw is None:
