@@ -319,6 +319,7 @@ FORECAST_FEATURES = {
 FORECAST_DAILY_LIMIT = 8
 FORECAST_HOURLY_PAYLOAD_LIMIT = 168
 FORECAST_CACHE_TTL = timedelta(minutes=10)
+FORECAST_REFRESH_INTERVAL = 60.0
 
 _CONFIG_META_RUNTIME_FIELDS = frozenset(
   {"available", "icon", "last_changed", "state", "value"}
@@ -1089,6 +1090,10 @@ class Tab5Bridge:
     self._icon_cache: Dict[str, str] = {}
     self._icon_refresh_handle = None
     self._forecast_cache: Dict[Tuple[str, str], Tuple[datetime, List[Dict[str, Any]]]] = {}
+    self._weather_refresh_handle = None
+    self._weather_refresh_task = None
+    self._unsub_weather_stop = None
+    self._weather_last_payload: Dict[str, str] = {}
     self._refresh_runtime_entity_lists()
 
   def _resolve_internal_sensor_entities(self) -> List[str]:
@@ -1350,10 +1355,15 @@ class Tab5Bridge:
       )
       _LOGGER.debug("Tab5 subscribed to energy topic %s", self.energy_request_topic)
     self._schedule_config_refresh()
+    self._unsub_weather_stop = self.hass.bus.async_listen_once(
+      EVENT_HOMEASSISTANT_STOP, self._async_stop_weather_refresh
+    )
+    self._schedule_weather_refresh()
 
   async def async_unload(self) -> None:
     """Cleanup subscriptions."""
     self._runtime_setup_complete = False
+    await self._async_stop_weather_refresh()
     # Release any state-publish ownership so a surviving entry can reclaim it.
     owners = self.hass.data.get(DOMAIN, {}).get("state_owners")
     if owners:
@@ -3688,10 +3698,73 @@ class Tab5Bridge:
       return json.dumps(build_switch_state_payload(entity_id, state.state, state.attributes or {}))
     return state.state.replace(",", ".")
 
-  async def _async_publish_weather_state(self, entity_id: str, state: State, retain: bool = True) -> None:
+  def _schedule_weather_refresh(self) -> None:
+    """Retry late forecasts independently of current-weather state changes."""
+    if (not self._runtime_setup_complete or self._weather_refresh_handle is not None
+        or self._weather_refresh_task is not None):
+      return
+
+    @callback
+    def _refresh(_now) -> None:
+      self._weather_refresh_handle = None
+      if self._runtime_setup_complete:
+        self._weather_refresh_task = self.hass.async_create_task(self._async_refresh_weather())
+
+    self._weather_refresh_handle = async_call_later(
+      self.hass, FORECAST_REFRESH_INTERVAL, _refresh
+    )
+
+  async def _async_refresh_weather(self) -> None:
+    """One owner refreshes each entity; successful forecasts keep their cache TTL."""
+    try:
+      for entity_id in tuple(self._weather_last_payload):
+        if entity_id not in self.weathers:
+          self._weather_last_payload.pop(entity_id, None)
+      for entity_id in tuple(self.weathers):
+        if not self._runtime_setup_complete:
+          return
+        if not self._owns_state_publish(entity_id):
+          continue
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in ("unknown", "unavailable"):
+          continue
+        try:
+          await self._async_publish_weather_state(entity_id, state, only_if_changed=True)
+        except Exception:
+          _LOGGER.debug("Tab5 weather refresh failed for %s", entity_id, exc_info=True)
+    finally:
+      self._weather_refresh_task = None
+      self._schedule_weather_refresh()
+
+  async def _async_stop_weather_refresh(self, _event=None) -> None:
+    """Cancel both the timer and any in-flight refresh before releasing ownership."""
+    self._runtime_setup_complete = False
+    if self._unsub_weather_stop is not None:
+      self._unsub_weather_stop()
+      self._unsub_weather_stop = None
+    if self._weather_refresh_handle is not None:
+      self._weather_refresh_handle()
+      self._weather_refresh_handle = None
+    task = self._weather_refresh_task
+    if task is not None:
+      task.cancel()
+      try:
+        await task
+      except asyncio.CancelledError:
+        pass
+      self._weather_refresh_task = None
+    self._weather_last_payload.clear()
+
+  async def _async_publish_weather_state(
+    self, entity_id: str, state: State, retain: bool = True, *, only_if_changed: bool = False
+  ) -> None:
     payload = await self._build_weather_payload(entity_id, state)
+    if only_if_changed and self._weather_last_payload.get(entity_id) == payload:
+      return
     topic = self._ha_topic_for_entity(entity_id, "weather")
     await mqtt.async_publish(self.hass, topic, payload, qos=0, retain=retain)
+    if entity_id in self.weathers:
+      self._weather_last_payload[entity_id] = payload
 
   async def _build_weather_payload(self, entity_id: str, state: State) -> str:
     payload = _extract_weather_payload(state, self.hass)

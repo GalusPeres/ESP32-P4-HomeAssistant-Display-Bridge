@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from enum import IntFlag
@@ -29,6 +30,8 @@ def helpers():
         "_forecast_entry_local_date", "_forecast_entry_local_datetime",
         "_merge_hourly_precip_into_daily", "_build_daily_forecast_from_hourly",
         "_build_daily_forecast_from_periods", "_compact_daily_forecast", "_compact_hourly_forecast",
+        "_schedule_weather_refresh", "_async_refresh_weather", "_async_stop_weather_refresh",
+        "_async_publish_weather_state",
     }
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     constants = [n for n in tree.body if isinstance(n, ast.Assign) and any(
@@ -44,7 +47,8 @@ def helpers():
         except (ValueError, TypeError):
             return None
 
-    scope = dict(json=json, date=date, datetime=datetime, timedelta=timedelta,
+    scope = dict(json=json, asyncio=asyncio, callback=lambda fn: fn,
+                 date=date, datetime=datetime, timedelta=timedelta,
                  WeatherEntityFeature=WeatherEntityFeature, async_get_forecasts=None,
                  _LOGGER=logging.getLogger(__name__), _weather_icon_from_state=lambda *args: None,
                  dt_util=SimpleNamespace(utcnow=lambda: datetime(2026, 9, 8, tzinfo=timezone.utc),
