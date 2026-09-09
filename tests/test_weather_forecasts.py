@@ -30,7 +30,8 @@ def helpers():
         "_forecast_entry_local_date", "_forecast_entry_local_datetime",
         "_merge_hourly_precip_into_daily", "_build_daily_forecast_from_hourly",
         "_build_daily_forecast_from_periods", "_compact_daily_forecast", "_compact_hourly_forecast",
-        "_schedule_weather_refresh", "_async_refresh_weather", "_async_stop_weather_refresh",
+        "_weather_started", "_sync_weather_subscriptions", "_subscribe_weather_forecast",
+        "_queue_weather_update", "_async_process_weather_updates", "_async_stop_weather_updates",
         "_async_publish_weather_state",
     }
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
@@ -49,7 +50,7 @@ def helpers():
 
     scope = dict(json=json, asyncio=asyncio, callback=lambda fn: fn,
                  date=date, datetime=datetime, timedelta=timedelta,
-                 WeatherEntityFeature=WeatherEntityFeature, async_get_forecasts=None,
+                 WeatherEntityFeature=WeatherEntityFeature, WEATHER_DATA_COMPONENT="weather", async_get_forecasts=None,
                  _LOGGER=logging.getLogger(__name__), _weather_icon_from_state=lambda *args: None,
                  dt_util=SimpleNamespace(utcnow=lambda: datetime(2026, 9, 8, tzinfo=timezone.utc),
                                          as_local=lambda dt: dt.astimezone(local_tz),
@@ -94,7 +95,8 @@ class WeatherForecastTests(unittest.IsolatedAsyncioTestCase):
             return {state.entity_id: {"forecast": deepcopy(response)}}
 
         runtime = SimpleNamespace(hass=SimpleNamespace(states=SimpleNamespace(get=lambda _: state),
-                                                       services=SimpleNamespace(async_call=service)), _forecast_cache={})
+                                                       services=SimpleNamespace(async_call=service)),
+                                  _forecast_cache={}, _weather_subscriptions={})
         for name in ("_get_weather_forecast", "_fetch_weather_forecast", "_build_weather_payload"):
             setattr(runtime, name, MethodType(scope[name], runtime))
         return runtime, state, calls
