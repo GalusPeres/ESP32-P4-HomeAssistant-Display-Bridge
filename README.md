@@ -10,7 +10,7 @@ This integration is the Home Assistant companion for the **HomeTiles** firmware.
 
 - Pushing entity states, metadata and icons to the display in real time
 - Numeric sensor graphs plus bounded binary and textual-state timelines for 24 hours or 7 days
-- Weather forecasts (daily + hourly)
+- Weather forecasts (daily, twice-daily day/night periods, and hourly)
 - Energy dashboard data (consumption, solar, grid, battery, gas, water)
 - Light, switch, cover, climate, media player and scene control from the display
 - Experimental camera popups with local, receiver-paced JPEG video transport

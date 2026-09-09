@@ -18,6 +18,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import mqtt
 from homeassistant.components import network as ha_network
+from homeassistant.components.weather import WeatherEntityFeature
 from homeassistant.components.mqtt.models import ReceiveMessage
 from homeassistant.components.recorder import get_instance
 try:
@@ -309,6 +310,12 @@ SERVICE_SCHEMA = vol.Schema({vol.Optional("entry_id"): cv.string})
 
 FORECAST_DAILY_TYPE = "daily"
 FORECAST_HOURLY_TYPE = "hourly"
+FORECAST_TWICE_DAILY_TYPE = "twice_daily"
+FORECAST_FEATURES = {
+  FORECAST_DAILY_TYPE: WeatherEntityFeature.FORECAST_DAILY,
+  FORECAST_HOURLY_TYPE: WeatherEntityFeature.FORECAST_HOURLY,
+  FORECAST_TWICE_DAILY_TYPE: WeatherEntityFeature.FORECAST_TWICE_DAILY,
+}
 FORECAST_DAILY_LIMIT = 8
 FORECAST_HOURLY_PAYLOAD_LIMIT = 168
 FORECAST_CACHE_TTL = timedelta(minutes=10)
@@ -3507,6 +3514,12 @@ class Tab5Bridge:
     entity_id: str,
     forecast_type: str,
   ) -> Optional[List[Dict[str, Any]]]:
+    state = self.hass.states.get(entity_id)
+    features = (state.attributes or {}).get("supported_features") if state else None
+    required_feature = FORECAST_FEATURES.get(forecast_type)
+    if isinstance(features, int) and required_feature and not features & required_feature:
+      return None
+
     now = dt_util.utcnow()
     cache_key = (entity_id, forecast_type)
     cached = self._forecast_cache.get(cache_key)
@@ -3686,6 +3699,12 @@ class Tab5Bridge:
     if not isinstance(daily_forecast, list) or not daily_forecast:
       daily_forecast = await self._get_weather_forecast(entity_id, FORECAST_DAILY_TYPE)
 
+    twice_daily_forecast = None
+    if not daily_forecast:
+      twice_daily_forecast = await self._get_weather_forecast(entity_id, FORECAST_TWICE_DAILY_TYPE)
+      if twice_daily_forecast:
+        daily_forecast = _build_daily_forecast_from_periods(twice_daily_forecast, twice_daily=True)
+
     hourly_forecast = await self._get_weather_forecast(entity_id, FORECAST_HOURLY_TYPE)
 
     prepared_daily: List[Dict[str, Any]] = []
@@ -3696,11 +3715,11 @@ class Tab5Bridge:
         local_day = _forecast_entry_local_date(entry)
         if local_day is not None:
           entry["date_local"] = local_day.isoformat()
-      if hourly_forecast:
+      if hourly_forecast and not twice_daily_forecast:
         prepared_daily = _merge_hourly_precip_into_daily(prepared_daily, hourly_forecast)
 
     if hourly_forecast:
-      built_daily = _build_daily_forecast_from_hourly(hourly_forecast)
+      built_daily = _build_daily_forecast_from_periods(hourly_forecast)
       if prepared_daily:
         by_day: Dict[str, Dict[str, Any]] = {}
         for entry in built_daily:
@@ -4204,10 +4223,13 @@ def _merge_hourly_precip_into_daily(
   return merged
 
 
-def _build_daily_forecast_from_hourly(hourly_forecast: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_daily_forecast_from_periods(
+  forecast: List[Dict[str, Any]], *, twice_daily: bool = False,
+) -> List[Dict[str, Any]]:
+  """Aggregate local dates, using period lows and daytime icons for twice-daily data."""
   buckets: Dict[date, Dict[str, Any]] = {}
 
-  for entry in hourly_forecast:
+  for entry in forecast:
     if not isinstance(entry, dict):
       continue
     forecast_day = _forecast_entry_local_date(entry)
@@ -4233,7 +4255,11 @@ def _build_daily_forecast_from_hourly(hourly_forecast: List[Dict[str, Any]]) -> 
     temperature = _weather_number(entry.get("temperature"))
     if temperature is not None:
       bucket["high"] = temperature if bucket["high"] is None else max(bucket["high"], temperature)
-      bucket["low"] = temperature if bucket["low"] is None else min(bucket["low"], temperature)
+    low = _weather_number(entry.get("templow")) if twice_daily else None
+    if low is None:
+      low = temperature
+    if low is not None:
+      bucket["low"] = low if bucket["low"] is None else min(bucket["low"], low)
 
     precipitation = _weather_number(entry.get("precipitation"))
     if precipitation is not None:
@@ -4251,6 +4277,9 @@ def _build_daily_forecast_from_hourly(hourly_forecast: List[Dict[str, Any]]) -> 
     local_dt = _forecast_entry_local_datetime(entry)
     hour = local_dt.hour if local_dt is not None else None
     distance = abs(hour - 12) if hour is not None else 99
+    if twice_daily:
+      # Providers may use the same timestamp for both periods. Use HA's explicit flag.
+      distance = 0 if entry.get("is_daytime") is True else 1
     if distance <= bucket["midday_distance"]:
       bucket["midday_distance"] = distance
       bucket["condition"] = entry.get("condition")
@@ -4798,8 +4827,8 @@ def _extract_weather_payload(state: State, hass: Optional[HomeAssistant] = None)
   forecast = _sanitize_forecast_list(attrs.get("forecast"))
   if forecast:
     _apply_forecast_icons(forecast)
-    if len(forecast) > FORECAST_LIMIT:
-      forecast = forecast[:FORECAST_LIMIT]
+    if len(forecast) > FORECAST_DAILY_LIMIT:
+      forecast = forecast[:FORECAST_DAILY_LIMIT]
     payload["forecast"] = forecast
 
   return payload
